@@ -1,0 +1,7 @@
+.env
+.env*
+
+#
+tmp/*
+/tmp/
+tess/vegeta/results.html
