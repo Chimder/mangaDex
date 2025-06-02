@@ -1,11 +1,9 @@
 package handler
 
 import (
-	"csTrade/config"
-	_ "csTrade/docs"
-	"csTrade/internal/domain/bots"
-	"csTrade/internal/handler/middleware"
-	"fmt"
+	_ "mangadex/docs"
+
+	"mangadex/internal/handler/middleware"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -24,7 +22,6 @@ func Init() *gin.Engine {
 		AllowCredentials: false,
 		MaxAge:           300,
 	}))
-
 
 	{
 		r.GET("/swagger", ginSwagger.WrapHandler(swaggerfiles.Handler))

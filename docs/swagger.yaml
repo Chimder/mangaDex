@@ -1,0 +1,9 @@
+basePath: /
+info:
+  contact: {}
+  description: This is an unofficial REST API for interacting with MangaDex website
+    functionality.
+  title: Unofficial MangaDex API
+  version: "0.1"
+paths: {}
+swagger: "2.0"

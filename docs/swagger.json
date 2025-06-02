@@ -1,0 +1,11 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "This is an unofficial REST API for interacting with MangaDex website functionality.",
+        "title": "Unofficial MangaDex API",
+        "contact": {},
+        "version": "0.1"
+    },
+    "basePath": "/",
+    "paths": {}
+}
