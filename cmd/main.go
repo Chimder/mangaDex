@@ -5,8 +5,10 @@ import (
 	"log"
 	"log/slog"
 	"mangadex/internal/domain/proxy"
+	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	_ "github.com/lib/pq"
@@ -22,13 +24,36 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	proxyManager := proxy.NewProxyManager(200)
+	proxyManager := proxy.NewProxyManager(100)
 
 	err := proxyManager.InitProxyManager()
 	if err != nil {
 		log.Fatal(err)
 	}
 	slog.Info("Proxy", "NextIdx", proxyManager.NextIndexAddres, "LEN", len(proxyManager.AllAddresses))
+	urlToCheck := ""
+	var wg sync.WaitGroup
+
+	for _, v := range proxyManager.ProxyClients {
+		wg.Add(1)
+		go func(v *proxy.ProxyClient) {
+			defer wg.Done()
+
+			resp, err := v.Client.Get(urlToCheck)
+			if err != nil {
+				slog.Warn("Request failed", "proxy", v.Addr, "error", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				slog.Info("Proxy works", "proxy", v.Addr)
+			} else {
+				slog.Warn("Bad status code", "proxy", v.Addr, "code", resp.StatusCode)
+			}
+		}(v)
+	}
+	wg.Wait()
 
 	// total, working := pm.GetStats()
 	// log.Printf("Final result: %d working proxies out of %d total", working, total)
