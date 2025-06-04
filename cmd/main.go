@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"log"
 	"log/slog"
+	"mangadex/internal/domain/proxy"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,7 +22,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// prox := proxy.ProxyClient{}
+	proxyManager := proxy.NewProxyManager(200)
+
+	err := proxyManager.InitProxyManager()
+	if err != nil {
+		log.Fatal(err)
+	}
+	slog.Info("Proxy", "NextIdx", proxyManager.NextIndexAddres, "LEN", len(proxyManager.AllAddresses))
+
+	// total, working := pm.GetStats()
+	// log.Printf("Final result: %d working proxies out of %d total", working, total)
+	// for addr, client := range proxyManager.ProxyClients {
+
+	// }
 	// prox.GetTxtProxy()
 	// prox.TestProxy()
 	// log.Fatalf("added is %v", len(prox.Addresses))
