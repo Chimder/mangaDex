@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +30,7 @@ type ProxyClient struct {
 	Type   ProxyType
 	Client *http.Client
 	Status bool
+	mu     sync.RWMutex
 }
 
 type ProxyManager struct {
@@ -47,8 +48,14 @@ func NewProxyManager(maxConn int) *ProxyManager {
 	}
 }
 
+func (pc *ProxyClient) MarkAsBad() {
+	slog.Info("MarkAsBad", "#", pc.Addr)
+	pc.Status = false
+}
+
 func (pc *ProxyClient) Create(addr string) *ProxyClient {
 	originalAddr := addr
+	pc.mu = sync.RWMutex{}
 	var proxyType ProxyType
 	var cleanAddr string
 
@@ -87,8 +94,8 @@ func (pc *ProxyClient) Create(addr string) *ProxyClient {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.Dial(network, addr)
 			},
-			MaxIdleConns:          5,
-			IdleConnTimeout:       10 * time.Second,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       15 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 3 * time.Second,
 			TLSHandshakeTimeout:   2 * time.Second,
@@ -102,8 +109,8 @@ func (pc *ProxyClient) Create(addr string) *ProxyClient {
 		}
 		transport = &http.Transport{
 			Proxy:                 http.ProxyURL(proxyUrl),
-			MaxIdleConns:          5,
-			IdleConnTimeout:       10 * time.Second,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       15 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 3 * time.Second,
 			TLSHandshakeTimeout:   2 * time.Second,
@@ -119,38 +126,23 @@ func (pc *ProxyClient) Create(addr string) *ProxyClient {
 		Type: proxyType,
 		Client: &http.Client{
 			Transport: transport,
-			Timeout:   10 * time.Second,
+			Timeout:   15 * time.Second,
 		},
 		Status: false,
 	}
 }
 
-var testServices = []string{
-	"https://api.ipify.org?format=text",
-	"https://icanhazip.com",
-	"https://ident.me",
-	"https://ipecho.net/plain",
-	"https://ipinfo.io/ip",
-	"https://checkip.amazonaws.com",
-	"https://api.my-ip.io/ip",
-	"https://ipapi.co/ip",
-	"https://ifconfig.me/ip",
-	"https://ip.sb",
-	"https://ip.seeip.org",
-	"https://ip-api.com/line?fields=query",
-	"https://wtfismyip.com/text",
-	"http://ip.qaros.com",
-	"http://ip.42.pl/raw",
-	"http://httpbin.org/ip",
-	"https://l2.io/ip",
-	"https://myexternalip.com/raw",
+var testUrl = []string{
+	"https://api.mangadex.org/ping",
+	// "https://api.mangadex.org/manga?limit=1",
+	// "https://api.mangadex.org/cover?limit=1",
 }
 
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
-	randIndex := rand.Intn(len(testServices))
-	serviceURL := testServices[randIndex]
+	randIndex := rand.Intn(len(testUrl))
+	serviceURL := testUrl[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", serviceURL, nil)
@@ -175,119 +167,108 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	return err
 }
 
-func (pm *ProxyManager) fastCount() int {
+func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {
+	ticker := time.NewTicker(tick)
+	for {
+		select {
+		case <-ticker.C:
+			for addr, client := range pm.ProxyClients {
+				client.mu.Lock()
+				if !client.Status {
+					delete(pm.ProxyClients, addr)
+				}
+				client.mu.Unlock()
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+func (pm *ProxyManager) FastCount() int {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return len(pm.ProxyClients)
 }
 
-func (pm *ProxyManager) InitProxyManager() error {
+func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 	addresses, err := pm.GetTxtProxy()
 	if err != nil {
 		return err
 	}
 	pm.AllAddresses = addresses
-	pm.ProxyClients = make(map[string]*ProxyClient)
 
-	var wg sync.WaitGroup
-
-	limits := make(chan struct{}, 700)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	for i, addr := range addresses {
-		if pm.fastCount() >= pm.MaxConn {
-			pm.mu.Lock()
-			pm.NextIndexAddres = i
-			pm.mu.Unlock()
-			break
-		}
-
-		wg.Add(1)
-		go func(addr string, index int) {
-			defer wg.Done()
-			select {
-			case limits <- struct{}{}:
-				defer func() { <-limits }()
-			case <-ctx.Done():
-				return
-			}
-
-			if ctx.Err() != nil {
-				return
-			}
-
-			client := (&ProxyClient{}).Create(addr)
-			if client == nil {
-				return
-			}
-
-			if err := client.TestWithRotation(ctx); err != nil {
-				if transport, ok := client.Client.Transport.(*http.Transport); ok {
-					transport.CloseIdleConnections()
-				}
-				return
-			}
-
-			client.Status = true
-
-			pm.mu.Lock()
-			defer pm.mu.Unlock()
-
-			if len(pm.ProxyClients) >= pm.MaxConn {
-				return
-			}
-
-			pm.ProxyClients[client.Addr] = client
-			newCount := len(pm.ProxyClients)
-			log.Printf("Add proxy %d: %s", newCount, client.Addr)
-
-			if newCount >= pm.MaxConn {
-				pm.NextIndexAddres = i
-				cancel()
-			}
-		}(addr, i)
-	}
-
-	wg.Wait()
+	go pm.mainProxyPool(ctx)
 	return nil
 }
 
-func (pm *ProxyManager) DeleteProxyClient(addr string) {
+func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
+	workerPool := make(chan struct{}, 100)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			pm.mu.RLock()
+			needed := pm.MaxConn - len(pm.ProxyClients)
+			pm.mu.RUnlock()
+
+			if needed <= 0 {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			for i := 0; i < needed; i++ {
+				workerPool <- struct{}{}
+				go pm.testAndAddProxy(ctx, workerPool)
+			}
+		}
+	}
+}
+func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{}) {
+	defer func() { <-pool }()
+
 	pm.mu.Lock()
-	delete(pm.ProxyClients, addr)
-	currentCount := len(pm.ProxyClients)
+	if pm.NextIndexAddres >= len(pm.AllAddresses) {
+		addresses, err := pm.GetTxtProxy()
+		if err != nil {
+			pm.mu.Unlock()
+			return
+		}
+		pm.AllAddresses = addresses
+		pm.NextIndexAddres = 0
+	}
+
+	addr := pm.AllAddresses[pm.NextIndexAddres]
+	pm.NextIndexAddres++
 	pm.mu.Unlock()
 
-	go func() {
-		pm.mu.Lock()
-		defer pm.mu.Unlock()
+	pm.mu.RLock()
+	_, exists := pm.ProxyClients[addr]
+	currentLen := len(pm.ProxyClients)
+	pm.mu.RUnlock()
 
-		for len(pm.ProxyClients) < pm.MaxConn && pm.NextIndexAddres < len(pm.AllAddresses) {
-			newAddr := pm.AllAddresses[pm.NextIndexAddres]
-			pm.NextIndexAddres++
+	if exists || currentLen >= pm.MaxConn {
+		return
+	}
 
-			if _, exists := pm.ProxyClients[newAddr]; exists {
-				continue
-			}
+	client := (&ProxyClient{}).Create(addr)
+	if client == nil {
+		return
+	}
 
-			client := (&ProxyClient{}).Create(newAddr)
-			if client == nil {
-				continue
-			}
+	if err := client.TestWithRotation(ctx); err != nil {
+		return
+	}
 
-			// if err := client.TestWithRotation(ctx); err == nil {
-			// 	client.Status = true
-			// 	pm.ProxyClients[client.Addr] = client
-			// 	log.Printf("Replacement proxy added: %s (current: %d/%d)",
-			// 		client.Addr, len(pm.ProxyClients), pm.MaxConn)
-			// 	break
-			// }
-		}
-	}()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 
-	log.Printf("Deleted proxy: %s (remaining: %d/%d)", addr, currentCount, pm.MaxConn)
+	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
+		client.Status = true
+		pm.ProxyClients[addr] = client
+		slog.Info("Add proxy", "", addr)
+	}
 }
 
 func (pm *ProxyManager) GetTxtProxy() ([]string, error) {
@@ -303,42 +284,42 @@ func (pm *ProxyManager) GetTxtProxy() ([]string, error) {
 	sources := []source{
 		// {"https://www.proxy-list.download/api/v1/get?type=http&anon=elite&country=US", TypeHTTP},
 		// {"https://www.proxy-list.download/api/v1/get?type=http", TypeHTTP},
-		{"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
-		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
-		{"https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/almroot/proxylist/master/list.txt", TypeHTTP},
 		{"https://api.openproxylist.xyz/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt", TypeHTTP},
-
+		{"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
+		{"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
+		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
+		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt", TypeHTTP},
+		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/almroot/proxylist/master/list.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
-		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
 		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
-		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
+		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+
 		// {"https://www.proxy-list.download/api/v1/get?type=socks5&anon=elite", TypeSOCKS5},
 	}
 
@@ -399,22 +380,7 @@ func (pm *ProxyManager) GetTxtProxy() ([]string, error) {
 		}
 	}
 
-	// uniqueProxiesList = sortProxies(uniqueProxiesList)
 	return uniqueProxiesList, nil
-}
-func sortProxies(addresses []string) []string {
-	sorted := make([]string, len(addresses))
-	copy(sorted, addresses)
-
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return isSocks5(sorted[i]) && !isSocks5(sorted[j])
-	})
-
-	return sorted
-}
-
-func isSocks5(addr string) bool {
-	return strings.HasPrefix(strings.ToLower(addr), "socks5://")
 }
 
 func parseProxiesFromReader(reader io.Reader, pType ProxyType) []string {

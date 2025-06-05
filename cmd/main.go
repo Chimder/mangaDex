@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"mangadex/internal/domain/proxy"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -24,14 +24,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	proxyManager := proxy.NewProxyManager(100)
+	proxyManager := proxy.NewProxyManager(20)
+	go proxyManager.InitProxyManager(ctx)
+	go proxyManager.AutoCleanup(ctx, 5*time.Second)
 
-	err := proxyManager.InitProxyManager()
-	if err != nil {
-		log.Fatal(err)
+	for {
+		if proxyManager.FastCount() >= proxyManager.MaxConn {
+			break
+		}
+		slog.Info("Waiting for proxies to be ready...",
+			"current", proxyManager.FastCount(),
+			"required", proxyManager.MaxConn)
+		time.Sleep(5 * time.Second)
 	}
-	slog.Info("Proxy", "NextIdx", proxyManager.NextIndexAddres, "LEN", len(proxyManager.AllAddresses))
-	urlToCheck := ""
+	urlToCheck := "https://api.mangadex.org/manga?includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[rating]=desc&limit=18"
 	var wg sync.WaitGroup
 
 	for _, v := range proxyManager.ProxyClients {
@@ -42,6 +48,7 @@ func main() {
 			resp, err := v.Client.Get(urlToCheck)
 			if err != nil {
 				slog.Warn("Request failed", "proxy", v.Addr, "error", err)
+				v.MarkAsBad()
 				return
 			}
 			defer resp.Body.Close()
@@ -50,6 +57,7 @@ func main() {
 				slog.Info("Proxy works", "proxy", v.Addr)
 			} else {
 				slog.Warn("Bad status code", "proxy", v.Addr, "code", resp.StatusCode)
+				v.MarkAsBad()
 			}
 		}(v)
 	}
