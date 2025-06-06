@@ -30,32 +30,19 @@ type ProxyClient struct {
 	Type   ProxyType
 	Client *http.Client
 	Status bool
+	Busy   bool
 	mu     sync.RWMutex
-}
-
-type ProxyManager struct {
-	AllAddresses    []string
-	ProxyClients    map[string]*ProxyClient
-	MaxConn         int
-	NextIndexAddres int
-	mu              sync.RWMutex
-}
-
-func NewProxyManager(maxConn int) *ProxyManager {
-	return &ProxyManager{
-		ProxyClients: make(map[string]*ProxyClient),
-		MaxConn:      maxConn,
-	}
 }
 
 func (pc *ProxyClient) MarkAsBad() {
 	slog.Info("MarkAsBad", "#", pc.Addr)
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
 	pc.Status = false
 }
 
-func (pc *ProxyClient) Create(addr string) *ProxyClient {
+func CreateProxyClient(addr string) *ProxyClient {
 	originalAddr := addr
-	pc.mu = sync.RWMutex{}
 	var proxyType ProxyType
 	var cleanAddr string
 
@@ -66,7 +53,6 @@ func (pc *ProxyClient) Create(addr string) *ProxyClient {
 		proxyType = TypeHTTP
 		cleanAddr = strings.TrimPrefix(addr, "http://")
 	} else if strings.HasPrefix(addr, "socks4://") {
-		log.Printf("SOCKS4 proxy %s skipped - not supported", addr)
 		return nil
 	} else {
 		proxyType = TypeHTTP
@@ -133,7 +119,7 @@ func (pc *ProxyClient) Create(addr string) *ProxyClient {
 }
 
 var testUrl = []string{
-	"https://api.mangadex.org/ping",
+	"https://mangapark.io/signin",
 	// "https://api.mangadex.org/manga?limit=1",
 	// "https://api.mangadex.org/cover?limit=1",
 }
@@ -166,112 +152,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	return err
 }
-
-func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {
-	ticker := time.NewTicker(tick)
-	for {
-		select {
-		case <-ticker.C:
-			for addr, client := range pm.ProxyClients {
-				client.mu.Lock()
-				if !client.Status {
-					delete(pm.ProxyClients, addr)
-				}
-				client.mu.Unlock()
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-func (pm *ProxyManager) FastCount() int {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return len(pm.ProxyClients)
-}
-
-func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
-	addresses, err := pm.GetTxtProxy()
-	if err != nil {
-		return err
-	}
-	pm.AllAddresses = addresses
-
-	go pm.mainProxyPool(ctx)
-	return nil
-}
-
-func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 100)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			pm.mu.RLock()
-			needed := pm.MaxConn - len(pm.ProxyClients)
-			pm.mu.RUnlock()
-
-			if needed <= 0 {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-
-			for i := 0; i < needed; i++ {
-				workerPool <- struct{}{}
-				go pm.testAndAddProxy(ctx, workerPool)
-			}
-		}
-	}
-}
-func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{}) {
-	defer func() { <-pool }()
-
-	pm.mu.Lock()
-	if pm.NextIndexAddres >= len(pm.AllAddresses) {
-		addresses, err := pm.GetTxtProxy()
-		if err != nil {
-			pm.mu.Unlock()
-			return
-		}
-		pm.AllAddresses = addresses
-		pm.NextIndexAddres = 0
-	}
-
-	addr := pm.AllAddresses[pm.NextIndexAddres]
-	pm.NextIndexAddres++
-	pm.mu.Unlock()
-
-	pm.mu.RLock()
-	_, exists := pm.ProxyClients[addr]
-	currentLen := len(pm.ProxyClients)
-	pm.mu.RUnlock()
-
-	if exists || currentLen >= pm.MaxConn {
-		return
-	}
-
-	client := (&ProxyClient{}).Create(addr)
-	if client == nil {
-		return
-	}
-
-	if err := client.TestWithRotation(ctx); err != nil {
-		return
-	}
-
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
-		client.Status = true
-		pm.ProxyClients[addr] = client
-		slog.Info("Add proxy", "", addr)
-	}
-}
-
-func (pm *ProxyManager) GetTxtProxy() ([]string, error) {
+func GetTxtProxy() ([]string, error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var allFetchedProxies []string

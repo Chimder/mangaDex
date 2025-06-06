@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"log/slog"
-	"mangadex/internal/domain/proxy"
-	"net/http"
+	"mangadex/parser/proxy"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -29,39 +27,39 @@ func main() {
 	go proxyManager.AutoCleanup(ctx, 5*time.Second)
 
 	for {
-		if proxyManager.FastCount() >= proxyManager.MaxConn {
+		if proxyManager.GetProxyCount() >= proxyManager.MaxConn {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",
-			"current", proxyManager.FastCount(),
+			"current", proxyManager.GetProxyCount(),
 			"required", proxyManager.MaxConn)
 		time.Sleep(5 * time.Second)
 	}
-	urlToCheck := "https://api.mangadex.org/manga?includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[rating]=desc&limit=18"
-	var wg sync.WaitGroup
+	// urlToCheck := "https://api.mangadex.org/manga?includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[rating]=desc&limit=18"
+	// var wg sync.WaitGroup
 
-	for _, v := range proxyManager.ProxyClients {
-		wg.Add(1)
-		go func(v *proxy.ProxyClient) {
-			defer wg.Done()
+	// for _, v := range proxyManager.ProxyClients {
+	// 	wg.Add(1)
+	// 	go func(v *proxy.ProxyClient) {
+	// 		defer wg.Done()
 
-			resp, err := v.Client.Get(urlToCheck)
-			if err != nil {
-				slog.Warn("Request failed", "proxy", v.Addr, "error", err)
-				v.MarkAsBad()
-				return
-			}
-			defer resp.Body.Close()
+	// 		resp, err := v.Client.Get(urlToCheck)
+	// 		if err != nil {
+	// 			slog.Warn("Request failed", "proxy", v.Addr, "error", err)
+	// 			v.MarkAsBad()
+	// 			return
+	// 		}
+	// 		defer resp.Body.Close()
 
-			if resp.StatusCode == http.StatusOK {
-				slog.Info("Proxy works", "proxy", v.Addr)
-			} else {
-				slog.Warn("Bad status code", "proxy", v.Addr, "code", resp.StatusCode)
-				v.MarkAsBad()
-			}
-		}(v)
-	}
-	wg.Wait()
+	// 		if resp.StatusCode == http.StatusOK {
+	// 			slog.Info("Proxy works", "proxy", v.Addr)
+	// 		} else {
+	// 			slog.Warn("Bad status code", "proxy", v.Addr, "code", resp.StatusCode)
+	// 			v.MarkAsBad()
+	// 		}
+	// 	}(v)
+	// }
+	// wg.Wait()
 
 	// total, working := pm.GetStats()
 	// log.Printf("Final result: %d working proxies out of %d total", working, total)
