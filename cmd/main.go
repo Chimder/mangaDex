@@ -2,8 +2,9 @@ package main
 
 import (
 	"context"
+	"log"
 	"log/slog"
-	"mangadex/parser/proxy"
+	"mangadex/parser/query"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,19 +23,33 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	proxyManager := proxy.NewProxyManager(20)
-	go proxyManager.InitProxyManager(ctx)
-	go proxyManager.AutoCleanup(ctx, 5*time.Second)
+	// proxy := []string{"http://164.68.101.70:8888", "http://57.129.81.201:8081"}
 
-	for {
-		if proxyManager.GetProxyCount() >= proxyManager.MaxConn {
-			break
-		}
-		slog.Info("Waiting for proxies to be ready...",
-			"current", proxyManager.GetProxyCount(),
-			"required", proxyManager.MaxConn)
-		time.Sleep(5 * time.Second)
-	}
+	log.Print("Start")
+	times := time.Now()
+	// urlChapters := "https://mangapark.io/title/105625-en-isekai-meikyuu-de-harem-o/7241726-chapter-59-genghis-khan-5"
+	urlInfo := "https://mangapark.io/title/10749-en-one-punch-man"
+
+	parser := query.NewParserManager()
+	genres, chapters := parser.GetGenres(urlInfo)
+
+	log.Printf("Gen %s\n", genres)
+	log.Printf("Chap %s\n", chapters)
+	log.Printf("time %v", time.Since(times))
+	///////////////////////////////////////////////////////////////////////////
+	// proxyManager := proxy.NewProxyManager(20)
+	// go proxyManager.InitProxyManager(ctx)
+	// go proxyManager.AutoCleanup(ctx, 5*time.Second)
+
+	// for {
+	// 	if proxyManager.GetProxyCount() >= proxyManager.MaxConn {
+	// 		break
+	// 	}
+	// 	slog.Info("Waiting for proxies to be ready...",
+	// 		"current", proxyManager.GetProxyCount(),
+	// 		"required", proxyManager.MaxConn)
+	// 	time.Sleep(5 * time.Second)
+	// }
 	// urlToCheck := "https://api.mangadex.org/manga?includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[rating]=desc&limit=18"
 	// var wg sync.WaitGroup
 
@@ -60,6 +75,7 @@ func main() {
 	// 	}(v)
 	// }
 	// wg.Wait()
+	////////////////////////////////////////////////////
 
 	// total, working := pm.GetStats()
 	// log.Printf("Final result: %d working proxies out of %d total", working, total)

@@ -47,8 +47,9 @@ func CreateProxyClient(addr string) *ProxyClient {
 	var cleanAddr string
 
 	if strings.HasPrefix(addr, "socks5://") {
-		proxyType = TypeSOCKS5
-		cleanAddr = strings.TrimPrefix(addr, "socks5://")
+		// proxyType = TypeSOCKS5
+		// cleanAddr = strings.TrimPrefix(addr, "socks5://")
+		return nil
 	} else if strings.HasPrefix(addr, "http://") {
 		proxyType = TypeHTTP
 		cleanAddr = strings.TrimPrefix(addr, "http://")
@@ -128,7 +129,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	randIndex := rand.Intn(len(testUrl))
 	serviceURL := testUrl[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", serviceURL, nil)
@@ -177,31 +178,30 @@ func GetTxtProxy() ([]string, error) {
 		{"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
-		{"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
-		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
 		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
 		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt", TypeHTTP},
-		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/almroot/proxylist/master/list.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
-		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		// {"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
+		// {"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/almroot/proxylist/master/list.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		// {"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
+		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
 
-		// {"https://www.proxy-list.download/api/v1/get?type=socks5&anon=elite", TypeSOCKS5},
 	}
 
 	client := &http.Client{
@@ -304,8 +304,8 @@ func parseProxiesFromReader(reader io.Reader, pType ProxyType) []string {
 
 		var finalString string
 		switch pType {
-		case TypeSOCKS5:
-			finalString = "socks5://" + part
+		// case TypeSOCKS5:
+		// 	finalString = "socks5://" + part
 		case TypeHTTP:
 			finalString = "http://" + part
 		default:
