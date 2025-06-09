@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"golang.org/x/net/proxy"
 )
 
 type ProxyType int
@@ -28,7 +26,6 @@ const (
 type ProxyClient struct {
 	Addr   string
 	Type   ProxyType
-	Client *http.Client
 	Status bool
 	Busy   bool
 	mu     sync.RWMutex
@@ -46,18 +43,11 @@ func CreateProxyClient(addr string) *ProxyClient {
 	var proxyType ProxyType
 	var cleanAddr string
 
-	if strings.HasPrefix(addr, "socks5://") {
-		// proxyType = TypeSOCKS5
-		// cleanAddr = strings.TrimPrefix(addr, "socks5://")
-		return nil
-	} else if strings.HasPrefix(addr, "http://") {
+	if strings.HasPrefix(addr, "http://") {
 		proxyType = TypeHTTP
 		cleanAddr = strings.TrimPrefix(addr, "http://")
-	} else if strings.HasPrefix(addr, "socks4://") {
-		return nil
 	} else {
-		proxyType = TypeHTTP
-		cleanAddr = addr
+		return nil
 	}
 
 	if _, _, err := net.SplitHostPort(cleanAddr); err != nil {
@@ -65,71 +55,48 @@ func CreateProxyClient(addr string) *ProxyClient {
 		return nil
 	}
 
-	var transport *http.Transport
-
-	switch proxyType {
-	case TypeSOCKS5:
-		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 10 * time.Second,
-		})
-		if err != nil {
-			log.Printf("Failed to create SOCKS5 dialer for %s: %v", cleanAddr, err)
-			return nil
-		}
-		transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
-			},
-			MaxIdleConns:          10,
-			IdleConnTimeout:       15 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			ResponseHeaderTimeout: 3 * time.Second,
-			TLSHandshakeTimeout:   2 * time.Second,
-		}
-
-	case TypeHTTP:
-		proxyUrl, err := url.Parse("http://" + cleanAddr)
-		if err != nil {
-			log.Printf("Failed to parse HTTP proxy address %s: %v", cleanAddr, err)
-			return nil
-		}
-		transport = &http.Transport{
-			Proxy:                 http.ProxyURL(proxyUrl),
-			MaxIdleConns:          10,
-			IdleConnTimeout:       15 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			ResponseHeaderTimeout: 3 * time.Second,
-			TLSHandshakeTimeout:   2 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 10 * time.Second,
-			}).DialContext,
-		}
-	}
-
 	return &ProxyClient{
-		Addr: originalAddr,
-		Type: proxyType,
-		Client: &http.Client{
-			Transport: transport,
-			Timeout:   15 * time.Second,
-		},
-		Status: false,
+		Addr:   originalAddr,
+		Type:   proxyType,
+		Busy:   false,
+		Status: true,
 	}
 }
 
 var testUrl = []string{
+	// "https://mangapark.io/docs",
 	"https://mangapark.io/signin",
-	// "https://api.mangadex.org/manga?limit=1",
-	// "https://api.mangadex.org/cover?limit=1",
+	// "https://mangapark.io/mirrors",
+	// "https://mangapark.io/reports?where=all&status=unread_and_unsolved",
 }
 
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	randIndex := rand.Intn(len(testUrl))
 	serviceURL := testUrl[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	proxyUrl, err := url.Parse(pc.Addr)
+	if err != nil {
+		log.Printf("Failed to parse HTTP proxy address %s: %v", pc.Addr, err)
+		return nil
+	}
+	transport := &http.Transport{
+		Proxy:                 http.ProxyURL(proxyUrl),
+		MaxIdleConns:          10,
+		IdleConnTimeout:       15 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Second,
+		TLSHandshakeTimeout:   2 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 10 * time.Second,
+		}).DialContext,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   15 * time.Second,
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", serviceURL, nil)
@@ -140,7 +107,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Connection", "close")
 
-	resp, err := pc.Client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %v", err)
 	}
@@ -164,20 +131,20 @@ func GetTxtProxy() ([]string, error) {
 	}
 
 	sources := []source{
-		// {"https://www.proxy-list.download/api/v1/get?type=http&anon=elite&country=US", TypeHTTP},
-		// {"https://www.proxy-list.download/api/v1/get?type=http", TypeHTTP},
+		{"https://www.proxy-list.download/api/v1/get?type=http&anon=elite&country=US", TypeHTTP},
+		{"https://www.proxy-list.download/api/v1/get?type=http", TypeHTTP},
 		{"https://api.openproxylist.xyz/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
 		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
 		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", TypeHTTP},

@@ -33,7 +33,9 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 100)
+	workerPool := make(chan struct{}, 200)
+	// ticker := time.NewTicker(500 * time.Millisecond)
+	// defer ticker.Stop()
 
 	for {
 		select {
@@ -45,23 +47,60 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 			pm.mu.RUnlock()
 
 			if needed <= 0 {
-				time.Sleep(1 * time.Second)
 				continue
 			}
 
-			for i := 0; i < needed; i++ {
-				workerPool <- struct{}{}
-				go pm.testAndAddProxy(ctx, workerPool)
+			for range needed {
+				select {
+				case workerPool <- struct{}{}:
+					go pm.testAndAddProxy(ctx, workerPool)
+				default:
+					continue
+				}
 			}
 		}
 	}
 }
 
+func (pm *ProxyManager) GetAvailableProxyClient() *ProxyClient {
+	pm.mu.RLock()
+	clients := make([]*ProxyClient, 0, len(pm.ProxyClients))
+	for _, v := range pm.ProxyClients {
+		clients = append(clients, v)
+	}
+	pm.mu.RUnlock()
+
+	for _, v := range clients {
+		v.mu.Lock()
+		if !v.Busy && v.Status {
+			v.Busy = true
+			v.mu.Unlock()
+			return v
+		}
+		v.mu.Unlock()
+	}
+
+	for _, v := range clients {
+		v.mu.Lock()
+		if v.Status {
+			v.Busy = true
+			v.mu.Unlock()
+			return v
+		}
+		v.mu.Unlock()
+	}
+
+	return nil
+}
+
 func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {
 	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
+			pm.mu.Lock()
 			for addr, client := range pm.ProxyClients {
 				client.mu.Lock()
 				if !client.Status {
@@ -69,6 +108,7 @@ func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {
 				}
 				client.mu.Unlock()
 			}
+			pm.mu.Unlock()
 		case <-ctx.Done():
 			return
 		}
@@ -84,6 +124,8 @@ func (pm *ProxyManager) GetProxyCount() int {
 func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{}) {
 	defer func() { <-pool }()
 
+	var addr string
+
 	pm.mu.Lock()
 	if pm.NextIndexAddres >= len(pm.AllAddresses) {
 		addresses, err := GetTxtProxy()
@@ -95,14 +137,11 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 		pm.NextIndexAddres = 0
 	}
 
-	addr := pm.AllAddresses[pm.NextIndexAddres]
+	addr = pm.AllAddresses[pm.NextIndexAddres]
 	pm.NextIndexAddres++
-	pm.mu.Unlock()
-
-	pm.mu.RLock()
 	_, exists := pm.ProxyClients[addr]
 	currentLen := len(pm.ProxyClients)
-	pm.mu.RUnlock()
+	pm.mu.Unlock()
 
 	if exists || currentLen >= pm.MaxConn {
 		return
@@ -125,16 +164,4 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 		pm.ProxyClients[addr] = client
 		slog.Info("Add proxy", "", addr)
 	}
-}
-
-func (pm *ProxyManager) GetAvailableProxy() *ProxyClient {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	for _, proxy := range pm.ProxyClients {
-		if !proxy.Busy {
-			return proxy
-		}
-	}
-	return nil
 }

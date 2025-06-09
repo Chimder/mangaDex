@@ -2,6 +2,17 @@ package query
 
 import "time"
 
+type MangaInfoParserResp struct {
+	Title       string
+	CoverURL    string
+	AltTitles   []string
+	Status      string
+	Authors     []string
+	Description string
+	Genres      []string
+	Chapters    []string
+}
+
 type AllPopularMangaResp struct {
 	Result   string `json:"result"`
 	Response string `json:"response"`
