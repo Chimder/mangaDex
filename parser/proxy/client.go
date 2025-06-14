@@ -31,11 +31,24 @@ type ProxyClient struct {
 	mu     sync.RWMutex
 }
 
+func (pc *ProxyClient) MarkAsBusy() {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.Busy = true
+}
+
+func (pc *ProxyClient) MarkAsNotBusy() {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.Busy = false
+}
+
 func (pc *ProxyClient) MarkAsBad() {
 	slog.Info("MarkAsBad", "#", pc.Addr)
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	pc.Status = false
+	pc.Busy = false
 }
 
 func CreateProxyClient(addr string) *ProxyClient {
@@ -51,7 +64,7 @@ func CreateProxyClient(addr string) *ProxyClient {
 	}
 
 	if _, _, err := net.SplitHostPort(cleanAddr); err != nil {
-		log.Printf("Invalid proxy address format %s: %v", addr, err)
+		log.Printf("Invalid proxy format %s: %v", addr, err)
 		return nil
 	}
 
@@ -76,7 +89,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 
 	proxyUrl, err := url.Parse(pc.Addr)
 	if err != nil {
-		log.Printf("Failed to parse HTTP proxy address %s: %v", pc.Addr, err)
+		log.Printf("Failed to parse proxy %s: %v", pc.Addr, err)
 		return nil
 	}
 	transport := &http.Transport{
@@ -96,7 +109,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 		Timeout:   15 * time.Second,
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", serviceURL, nil)
@@ -132,24 +145,24 @@ func GetTxtProxy() ([]string, error) {
 
 	sources := []source{
 		{"https://www.proxy-list.download/api/v1/get?type=http&anon=elite&country=US", TypeHTTP},
-		{"https://www.proxy-list.download/api/v1/get?type=http", TypeHTTP},
 		{"https://api.openproxylist.xyz/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
 		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
 		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt", TypeHTTP},
+		{"https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", TypeHTTP},
+		{"https://www.proxy-list.download/api/v1/get?type=http", TypeHTTP},
 		{"https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/http.txt", TypeHTTP},
 		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},

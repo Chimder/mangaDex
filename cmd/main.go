@@ -27,9 +27,9 @@ func main() {
 	log.Print("Start")
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(10)
+	proxyManager := proxy.NewProxyManager(18)
 	go proxyManager.InitProxyManager(ctx)
-	go proxyManager.AutoCleanup(ctx, 2*time.Second)
+	go proxyManager.AutoCleanup(ctx, 10*time.Second)
 
 	for {
 		if proxyManager.GetProxyCount() >= proxyManager.MaxConn {
@@ -38,12 +38,13 @@ func main() {
 		slog.Info("Waiting for proxies to be ready...",
 			"current", proxyManager.GetProxyCount(),
 			"required", proxyManager.MaxConn)
-		time.Sleep(15 * time.Second)
+		time.Sleep(2 * time.Minute)
 	}
 
 	taskMng := tasks.NewTaskManager(proxyManager, ctx)
 	taskMng.Start()
 
+	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
 	log.Printf("elapsed %v", time.Since(times))
 	////////////////////
 	////////////////////

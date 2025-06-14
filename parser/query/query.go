@@ -34,15 +34,19 @@ func (pm *ParserManager) GetMangaList(page string) ([]string, error) {
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
-	ctx, cancel := chromedp.NewContext(allocCtx)
+
+	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 3*time.Minute)
+	defer cancelCtxTime()
+
+	ctx, cancel := chromedp.NewContext(ctxWithTimeout)
 	defer cancel()
 
 	var links []string
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Sleep(2*time.Second),
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
-		chromedp.Sleep(500*time.Millisecond),
+		chromedp.Sleep(5*time.Second),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll('div.group.relative.w-full a[href^="/title/"]'))
 				.map(a => a.href)
@@ -88,16 +92,21 @@ func (pm *ParserManager) GetImgFromChapter(url string) ([]string, error) {
 }
 
 func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) {
-	slog.Info("StartFetchMangaInfo", "url", url)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
-	ctx, cancel := chromedp.NewContext(allocCtx)
+
+	ctx, cancel := context.WithTimeout(allocCtx, 3*time.Minute)
 	defer cancel()
+
+	chromeCtx, cancelChrome := chromedp.NewContext(ctx)
+	defer cancelChrome()
 
 	var mangaInfo MangaInfoParserResp
 
-	err := chromedp.Run(ctx,
+	err := chromedp.Run(chromeCtx,
 		chromedp.Navigate(url),
+		chromedp.Sleep(2*time.Second),
+		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
 		chromedp.Sleep(1*time.Second),
 		chromedp.WaitVisible(`div.flex.items-center.flex-wrap`, chromedp.ByQuery),
 		chromedp.WaitVisible(`div[data-name="chapter-list"], b.text-xl.font-variant-small-caps`, chromedp.ByQuery),

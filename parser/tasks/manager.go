@@ -3,16 +3,15 @@ package tasks
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"mangadex/parser/proxy"
 	"mangadex/parser/query"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-type taskStatus int
 type taskType int
 
 const (
@@ -21,28 +20,32 @@ const (
 	MangaChapterImgType
 )
 
+const maxRetries = 3
+
 type task struct {
-	ID   string
-	Type taskType
-	Url  string
+	ID         string
+	Type       taskType
+	URL        string
+	RetryCount int
 }
 
 type TaskManager struct {
-	taskChan       chan task
-	proxyManager   *proxy.ProxyManager
-	maxWorkers     int
-	currentPage    int
-	isProcessing   bool
-	ctx            context.Context
-	cancel         context.CancelFunc
-	activeTasks    sync.Map
-	currentMangaWg sync.WaitGroup
+	taskChan     chan *task
+	proxyManager *proxy.ProxyManager
+	maxWorkers   int
+	currentPage  int
+	ctx          context.Context
+	cancel       context.CancelFunc
+
+	pageProcessing sync.WaitGroup
+	activeTasks    atomic.Int32
+	processedTasks atomic.Int32
 }
 
 func NewTaskManager(proxyMng *proxy.ProxyManager, parentCtx context.Context) *TaskManager {
 	ctx, cancel := context.WithCancel(parentCtx)
 	return &TaskManager{
-		taskChan:     make(chan task, 1200),
+		taskChan:     make(chan *task, 1200),
 		proxyManager: proxyMng,
 		maxWorkers:   10,
 		currentPage:  1,
@@ -52,156 +55,204 @@ func NewTaskManager(proxyMng *proxy.ProxyManager, parentCtx context.Context) *Ta
 }
 
 func (tm *TaskManager) Start() {
-	sem := make(chan struct{}, tm.maxWorkers)
-	slog.Info("Start tasks mg")
+	slog.Info("Starting task manager")
+
+	workerSemaphore := make(chan struct{}, tm.maxWorkers)
 
 	go func() {
 		for {
 			select {
 			case <-tm.ctx.Done():
+				slog.Info("Task manager ctx cancel")
 				return
 			case t := <-tm.taskChan:
-				sem <- struct{}{}
-				defer func() { <-sem }()
+				if t == nil {
+					slog.Info("Task channel closed.")
+					return
+				}
 
-				go func(t task) {
-					slog.Info("TASK", "type", t.Type, "url", t.Url)
+				workerSemaphore <- struct{}{}
+				tm.activeTasks.Add(1)
 
-					switch t.Type {
-					case MangaInfoType:
-						tm.processMangaInfo(t)
-					case MangaChapterImgType:
-						tm.processChapterImg(t)
-					}
+				go func(taskToProcess *task) {
+					defer func() {
+						<-workerSemaphore
+						tm.activeTasks.Add(-1)
+						tm.pageProcessing.Done()
+						if r := recover(); r != nil {
+							slog.Error("Panic in task processing", "task", taskToProcess.ID, "error", r)
+						}
+					}()
+					tm.processTask(taskToProcess)
 				}(t)
 			}
 		}
-
 	}()
 
-	go func() {
-		for {
-			select {
-			case <-tm.ctx.Done():
-				return
-			default:
-				tm.currentMangaWg.Wait()
+	go tm.processPages()
+}
 
-				slog.Info("Start take first mangas")
-				t := task{
-					ID:   fmt.Sprintf("page_%d", tm.currentPage),
-					Type: MangaListType,
-					Url:  fmt.Sprintf("https://mangapark.io/search?sortby=field_follow&page=%s", strconv.Itoa(tm.currentPage)),
-				}
+func (tm *TaskManager) processPages() {
+	for {
+		select {
+		case <-tm.ctx.Done():
+			slog.Info("Page processing context stop.")
+			return
+		default:
+			tm.pageProcessing.Wait()
 
-				client := tm.proxyManager.GetAvailableProxyClient()
-				if client == nil {
-					client.MarkAsBad()
-					continue
-				}
+			slog.Info("Starting page processing", "page", tm.currentPage)
 
-				slog.Info("Get first client", "addr", client.Addr, "status", client.Status, "isBusy", client.Busy)
-
-				parser := query.NewParserManager(client.Addr)
-				mangas, err := parser.GetMangaList(t.Url)
-				if err != nil {
-					client.MarkAsBad()
-					continue
-				}
-				slog.Info("Get manga list", ":", len(mangas), "page:", tm.currentPage)
-
-
-				tm.currentMangaWg.Add(len(mangas))
-				for _, url := range mangas {
-					infoTask := task{
-						ID:   fmt.Sprintf("manga_info:%s", url),
-						Type: MangaInfoType,
-						Url:  url,
-					}
-					tm.taskChan <- infoTask
-				}
-
-				tm.currentPage++
-				time.Sleep(2 * time.Second)
+			client := tm.proxyManager.GetAvailableProxyClient()
+			if client == nil {
+				slog.Error("No proxies for fetch")
+				time.Sleep(10 * time.Second)
+				continue
 			}
-		}
-	}()
 
+			parser := query.NewParserManager(client.Addr)
+			pageStr := strconv.Itoa(tm.currentPage)
+			mangaURLs, err := parser.GetMangaList(pageStr)
+
+			client.MarkAsNotBusy()
+
+			if err != nil {
+				client.MarkAsBad()
+				slog.Error("Failed to get manga list", "page", tm.currentPage, "error", err)
+				time.Sleep(10 * time.Second)
+				continue
+			}
+
+			if len(mangaURLs) == 0 {
+				slog.Info("No manga found.", "page", tm.currentPage)
+				tm.cancel()
+				return
+			}
+
+			tm.processedTasks.Store(0)
+			slog.Info("Got manga list", "count", len(mangaURLs), "page", tm.currentPage)
+
+			for _, url := range mangaURLs {
+				infoTask := &task{
+					ID:   fmt.Sprintf("manga_info:%s", url),
+					Type: MangaInfoType,
+					URL:  url,
+				}
+
+				tm.pageProcessing.Add(1)
+
+				select {
+				case tm.taskChan <- infoTask:
+				case <-time.After(5 * time.Second):
+					slog.Warn("Timeout send task to channel ", "url", url)
+					tm.pageProcessing.Done()
+				case <-tm.ctx.Done():
+					slog.Info("Err while queuing tasks", "page", tm.currentPage)
+					tm.pageProcessing.Done()
+					return
+				}
+			}
+			tm.currentPage++
+		}
+	}
 }
 
-func (tm *TaskManager) processMangaInfo(t task) {
-	defer tm.currentMangaWg.Done()
+func (tm *TaskManager) processTask(t *task) {
+	defer tm.processedTasks.Add(1)
 
+	switch t.Type {
+	case MangaInfoType:
+		tm.handleMangaInfoTask(t)
+	case MangaChapterImgType:
+		tm.handleMangaChapterImgTask(t)
+	default:
+		slog.Warn("Unknown task type", "task_id", t.ID, "type", t.Type)
+	}
+}
+
+func (tm *TaskManager) handleMangaInfoTask(t *task) {
 	client := tm.proxyManager.GetAvailableProxyClient()
 	if client == nil {
-		tm.retryTask(t, client)
+		slog.Error("No available proxy", "url", t.URL, "retry_count", t.RetryCount)
+		tm.retryTask(t)
 		return
 	}
-
-	slog.Info("Processing manga info", "url", t.Url, "proxy", client.Addr)
-
-	defer func() {
-		client.Busy = false
-		if err := recover(); err != nil {
-			slog.Error("Recovered panic", "url", t.Url, "err", err)
-			client.MarkAsBad()
-		}
-	}()
 
 	parser := query.NewParserManager(client.Addr)
-	mangaInfo, err := parser.GetMangaInfo(t.Url)
+	mangaInfo, err := parser.GetMangaInfo(t.URL)
+
 	if err != nil {
-		tm.retryTask(t, client)
-		return
-	}
-
-	for _, chapterURL := range mangaInfo.Chapters {
-		imgTask := task{
-			ID:   fmt.Sprintf("chapter_img:%s", chapterURL),
-			Type: MangaChapterImgType,
-			Url:  chapterURL,
-		}
-		tm.currentMangaWg.Add(1)
-		tm.taskChan <- imgTask
-	}
-}
-
-func (tm *TaskManager) processChapterImg(t task) {
-	defer tm.currentMangaWg.Done()
-
-	client := tm.proxyManager.GetAvailableProxyClient()
-	if client == nil {
-		tm.retryTask(t, client)
-		return
-	}
-
-	defer func() {
-		client.Busy = false
-		if err := recover(); err != nil {
-			slog.Error("Recovered panic in chapter img", "url", t.Url, "err", err)
-			client.MarkAsBad()
-		}
-	}()
-
-	parser := query.NewParserManager(client.Addr)
-	images, err := parser.GetImgFromChapter(t.Url)
-	if err != nil {
-		tm.retryTask(t, client)
-		return
-	}
-
-	log.Printf("Found %d images for chapter %s", len(images), t.Url)
-}
-
-func (tm *TaskManager) retryTask(t task, client *proxy.ProxyClient) {
-	if client != nil {
 		client.MarkAsBad()
+		slog.Error("Err to get manga info", "url", t.URL, "error", err, "retry", t.RetryCount)
+		tm.retryTask(t)
+		return
 	}
-	time.Sleep(5 * time.Second)
-	tm.taskChan <- t
+
+	client.MarkAsNotBusy()
+	slog.Info("Get manga info", "title", mangaInfo.Title, "chapters", len(mangaInfo.Chapters))
+}
+
+func (tm *TaskManager) handleMangaChapterImgTask(t *task) {
+	client := tm.proxyManager.GetAvailableProxyClient()
+	if client == nil {
+		slog.Error("No available proxy for chap img", "url", t.URL, "retry", t.RetryCount)
+		tm.retryTask(t)
+		return
+	}
+
+	parser := query.NewParserManager(client.Addr)
+	images, err := parser.GetImgFromChapter(t.URL)
+
+	if err != nil {
+		client.MarkAsBad()
+		slog.Error("Err to get chap imgs", "url", t.URL, "error", err, "retry", t.RetryCount)
+		tm.retryTask(t)
+		return
+	}
+
+	client.MarkAsNotBusy()
+	slog.Info("Get chapters img", "url", t.URL, "imgs", len(images))
+}
+
+func (tm *TaskManager) retryTask(t *task) {
+	if t.RetryCount >= maxRetries {
+		slog.Error("Max retries over.", "id", t.ID, "url", t.URL)
+		return
+	}
+
+	t.RetryCount++
+	delay := time.Duration(t.RetryCount) * 2 * time.Second
+
+	slog.Info("Retrying task", "task", t.ID, "retry", t.RetryCount)
+
+	tm.pageProcessing.Add(1)
+	go func() {
+		select {
+		case <-time.After(delay):
+			select {
+			case tm.taskChan <- t:
+			case <-tm.ctx.Done():
+				slog.Info("Ctx retry cancel2", "task", t.ID)
+				tm.pageProcessing.Done()
+			case <-time.After(5 * time.Second):
+				slog.Warn("Time retry cancel1", "task", t.ID)
+				tm.pageProcessing.Done()
+			}
+		case <-tm.ctx.Done():
+			slog.Info("Ctx retry stop", "task", t.ID)
+			tm.pageProcessing.Done()
+		}
+	}()
 }
 
 func (tm *TaskManager) Stop() {
 	tm.cancel()
+	tm.pageProcessing.Wait()
+	time.Sleep(500 * time.Millisecond)
 	close(tm.taskChan)
+	slog.Info("Stop TaskManager.")
+}
+
+func (tm *TaskManager) GetStats() (int, int32, int32) {
+	return tm.currentPage, tm.activeTasks.Load(), tm.processedTasks.Load()
 }

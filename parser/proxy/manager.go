@@ -33,9 +33,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 200)
-	// ticker := time.NewTicker(500 * time.Millisecond)
-	// defer ticker.Stop()
+	workerPool := make(chan struct{}, 30)
 
 	for {
 		select {
@@ -47,15 +45,16 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 			pm.mu.RUnlock()
 
 			if needed <= 0 {
+				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 
 			for range needed {
 				select {
+				case <-ctx.Done():
+					return
 				case workerPool <- struct{}{}:
 					go pm.testAndAddProxy(ctx, workerPool)
-				default:
-					continue
 				}
 			}
 		}
@@ -64,33 +63,51 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 
 func (pm *ProxyManager) GetAvailableProxyClient() *ProxyClient {
 	pm.mu.RLock()
-	clients := make([]*ProxyClient, 0, len(pm.ProxyClients))
+	slog.Info("Proxy stats", "total", len(pm.ProxyClients), "needed", pm.MaxConn)
+
 	for _, v := range pm.ProxyClients {
-		clients = append(clients, v)
+		if !v.Busy && v.Status {
+			v.MarkAsBusy()
+			pm.mu.RUnlock()
+			return v
+		}
+	}
+
+	for _, v := range pm.ProxyClients {
+		if v.Status {
+			v.MarkAsBusy()
+			pm.mu.RUnlock()
+			return v
+		}
 	}
 	pm.mu.RUnlock()
 
-	for _, v := range clients {
-		v.mu.Lock()
-		if !v.Busy && v.Status {
-			v.Busy = true
-			v.mu.Unlock()
-			return v
-		}
-		v.mu.Unlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if len(pm.AllAddresses) == 0 {
+		return nil
 	}
 
-	for _, v := range clients {
-		v.mu.Lock()
-		if v.Status {
-			v.Busy = true
-			v.mu.Unlock()
-			return v
-		}
-		v.mu.Unlock()
+	addr := pm.AllAddresses[pm.NextIndexAddres]
+	pm.NextIndexAddres++
+
+	if existingClient, exists := pm.ProxyClients[addr]; exists {
+		existingClient.MarkAsBusy()
+		return existingClient
 	}
 
-	return nil
+	client := CreateProxyClient(addr)
+	if client == nil {
+		return nil
+	}
+
+	client.MarkAsBusy()
+	client.Status = true
+	pm.ProxyClients[addr] = client
+
+	slog.Info("Using untested proxy", "", addr)
+	return client
 }
 
 func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {
