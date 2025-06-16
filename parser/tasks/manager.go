@@ -8,7 +8,6 @@ import (
 	"mangadex/parser/query"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -20,7 +19,7 @@ const (
 	MangaChapterImgType
 )
 
-const maxRetries = 3
+const maxRetries = 7
 
 type task struct {
 	ID         string
@@ -38,16 +37,14 @@ type TaskManager struct {
 	cancel       context.CancelFunc
 
 	pageProcessing sync.WaitGroup
-	activeTasks    atomic.Int32
-	processedTasks atomic.Int32
 }
 
 func NewTaskManager(proxyMng *proxy.ProxyManager, parentCtx context.Context) *TaskManager {
 	ctx, cancel := context.WithCancel(parentCtx)
 	return &TaskManager{
-		taskChan:     make(chan *task, 1200),
+		taskChan:     make(chan *task, 4000),
 		proxyManager: proxyMng,
-		maxWorkers:   10,
+		maxWorkers:   20,
 		currentPage:  1,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -72,18 +69,23 @@ func (tm *TaskManager) Start() {
 				}
 
 				workerSemaphore <- struct{}{}
-				tm.activeTasks.Add(1)
-
 				go func(taskToProcess *task) {
 					defer func() {
 						<-workerSemaphore
-						tm.activeTasks.Add(-1)
 						tm.pageProcessing.Done()
 						if r := recover(); r != nil {
 							slog.Error("Panic in task processing", "task", taskToProcess.ID, "error", r)
 						}
 					}()
-					tm.processTask(taskToProcess)
+
+					switch t.Type {
+					case MangaInfoType:
+						tm.handleMangaInfoTask(t)
+					case MangaChapterImgType:
+						tm.handleMangaChapterImgTask(t)
+					default:
+						slog.Warn("Unknown task type", "task_id", t.ID, "type", t.Type)
+					}
 				}(t)
 			}
 		}
@@ -113,15 +115,13 @@ func (tm *TaskManager) processPages() {
 			parser := query.NewParserManager(client.Addr)
 			pageStr := strconv.Itoa(tm.currentPage)
 			mangaURLs, err := parser.GetMangaList(pageStr)
-
-			client.MarkAsNotBusy()
-
 			if err != nil {
 				client.MarkAsBad()
 				slog.Error("Failed to get manga list", "page", tm.currentPage, "error", err)
 				time.Sleep(10 * time.Second)
 				continue
 			}
+			client.MarkAsNotBusy()
 
 			if len(mangaURLs) == 0 {
 				slog.Info("No manga found.", "page", tm.currentPage)
@@ -129,7 +129,7 @@ func (tm *TaskManager) processPages() {
 				return
 			}
 
-			tm.processedTasks.Store(0)
+			// tm.processedTasks.Store(0)
 			slog.Info("Got manga list", "count", len(mangaURLs), "page", tm.currentPage)
 
 			for _, url := range mangaURLs {
@@ -157,19 +157,6 @@ func (tm *TaskManager) processPages() {
 	}
 }
 
-func (tm *TaskManager) processTask(t *task) {
-	defer tm.processedTasks.Add(1)
-
-	switch t.Type {
-	case MangaInfoType:
-		tm.handleMangaInfoTask(t)
-	case MangaChapterImgType:
-		tm.handleMangaChapterImgTask(t)
-	default:
-		slog.Warn("Unknown task type", "task_id", t.ID, "type", t.Type)
-	}
-}
-
 func (tm *TaskManager) handleMangaInfoTask(t *task) {
 	client := tm.proxyManager.GetAvailableProxyClient()
 	if client == nil {
@@ -180,12 +167,24 @@ func (tm *TaskManager) handleMangaInfoTask(t *task) {
 
 	parser := query.NewParserManager(client.Addr)
 	mangaInfo, err := parser.GetMangaInfo(t.URL)
-
 	if err != nil {
 		client.MarkAsBad()
 		slog.Error("Err to get manga info", "url", t.URL, "error", err, "retry", t.RetryCount)
 		tm.retryTask(t)
 		return
+	}
+	for _, img := range mangaInfo.Chapters {
+		chapterImgTask := &task{
+			ID:   fmt.Sprintf("Chapter_img:%s", img),
+			Type: MangaChapterImgType,
+			URL:  img,
+		}
+		select {
+		case tm.taskChan <- chapterImgTask:
+		case <-tm.ctx.Done():
+			slog.Info("Err while queuing chapterImg tasks", "url", chapterImgTask.URL)
+			return
+		}
 	}
 
 	client.MarkAsNotBusy()
@@ -228,19 +227,19 @@ func (tm *TaskManager) retryTask(t *task) {
 	tm.pageProcessing.Add(1)
 	go func() {
 		select {
+		case <-tm.ctx.Done():
+			slog.Info("Ctx retry cancel1", "task", t.ID)
+			tm.pageProcessing.Done()
 		case <-time.After(delay):
 			select {
 			case tm.taskChan <- t:
 			case <-tm.ctx.Done():
 				slog.Info("Ctx retry cancel2", "task", t.ID)
 				tm.pageProcessing.Done()
-			case <-time.After(5 * time.Second):
-				slog.Warn("Time retry cancel1", "task", t.ID)
-				tm.pageProcessing.Done()
+				// case <-time.After(5 * time.Second):
+				// 	slog.Warn("Time retry cancel3", "task", t.ID)
+				// 	tm.pageProcessing.Done()
 			}
-		case <-tm.ctx.Done():
-			slog.Info("Ctx retry stop", "task", t.ID)
-			tm.pageProcessing.Done()
 		}
 	}()
 }
@@ -253,6 +252,6 @@ func (tm *TaskManager) Stop() {
 	slog.Info("Stop TaskManager.")
 }
 
-func (tm *TaskManager) GetStats() (int, int32, int32) {
-	return tm.currentPage, tm.activeTasks.Load(), tm.processedTasks.Load()
-}
+// func (tm *TaskManager) GetStats() (int, int32, int32) {
+// 	return tm.currentPage, tm.activeTasks.Load(), tm.processedTasks.Load()
+// }

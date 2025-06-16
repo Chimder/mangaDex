@@ -27,12 +27,12 @@ func main() {
 	log.Print("Start")
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(18)
+	proxyManager := proxy.NewProxyManager(500)
 	go proxyManager.InitProxyManager(ctx)
 	go proxyManager.AutoCleanup(ctx, 10*time.Second)
 
 	for {
-		if proxyManager.GetProxyCount() >= proxyManager.MaxConn {
+		if proxyManager.GetProxyCount() >= 25 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",

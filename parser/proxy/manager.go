@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -44,6 +45,7 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 			needed := pm.MaxConn - len(pm.ProxyClients)
 			pm.mu.RUnlock()
 
+			log.Printf("Needed %v", needed)
 			if needed <= 0 {
 				time.Sleep(500 * time.Millisecond)
 				continue
@@ -157,10 +159,13 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 	addr = pm.AllAddresses[pm.NextIndexAddres]
 	pm.NextIndexAddres++
 	_, exists := pm.ProxyClients[addr]
-	currentLen := len(pm.ProxyClients)
+	// currentLen := len(pm.ProxyClients)
 	pm.mu.Unlock()
 
-	if exists || currentLen >= pm.MaxConn {
+	// if exists || currentLen >= pm.MaxConn {
+	// 	return
+	// }
+	if exists {
 		return
 	}
 
@@ -179,6 +184,5 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
 		client.Status = true
 		pm.ProxyClients[addr] = client
-		slog.Info("Add proxy", "", addr)
 	}
 }
