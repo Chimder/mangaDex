@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:latest
-    container_name: postgres
+    container_name: mangapark
     restart: always
     environment:
       POSTGRES_DB: postgres
@@ -10,38 +10,38 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/mangapark
     networks:
       - csTrade
 
   pgweb:
     image: sosedoff/pgweb
-    container_name: pgweb
+    container_name: pgwebMP
     restart: always
     depends_on:
       - postgres
     environment:
-      PGWEB_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable"
+      PGWEB_DATABASE_URL: "postgres://postgres:postgres@mangapark:5432/postgres?sslmode=disable"
     ports:
       - "8081:8081"
     networks:
       - csTrade
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:latest
-    container_name: elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - xpack.security.transport.ssl.enabled=false
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    networks:
-      - csTrade
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-    restart: always
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:latest
+  #   container_name: elasticsearch
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - xpack.security.transport.ssl.enabled=false
+  #   ports:
+  #     - "9200:9200"
+  #     - "9300:9300"
+  #   networks:
+  #     - csTrade
+  #   volumes:
+  #     - es_data:/usr/share/elasticsearch/data
+  #   restart: always
 
 volumes:
   postgres_data:

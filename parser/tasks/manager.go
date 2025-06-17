@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/minio/minio-go/v7"
 )
 
 type taskType int
@@ -35,15 +37,17 @@ type TaskManager struct {
 	currentPage  int
 	ctx          context.Context
 	cancel       context.CancelFunc
+	bucket       *minio.Client
 
 	pageProcessing sync.WaitGroup
 }
 
-func NewTaskManager(proxyMng *proxy.ProxyManager, parentCtx context.Context) *TaskManager {
-	ctx, cancel := context.WithCancel(parentCtx)
+func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, bucket *minio.Client) *TaskManager {
+	ctx, cancel := context.WithCancel(ctx)
 	return &TaskManager{
 		taskChan:     make(chan *task, 4000),
 		proxyManager: proxyMng,
+		bucket:       bucket,
 		maxWorkers:   20,
 		currentPage:  1,
 		ctx:          ctx,
