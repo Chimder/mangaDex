@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -28,7 +29,14 @@ func NewParserManager(proxyUrl string) *ParserManager {
 
 	return &ParserManager{allocOpts: opts}
 }
-func (pm *ParserManager) GetMangaList(page string) ([]string, error) {
+
+type MangaList struct {
+	Title    string `json:"title"`
+	TitleImg string `json:"titleImg"`
+	URL      string `json:"url"`
+}
+
+func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
 	slog.Info("StartFetchMangaList", "page", page)
 	url := fmt.Sprintf("https://mangapark.io/search?sortby=field_follow&page=%s", page)
 
@@ -41,23 +49,39 @@ func (pm *ParserManager) GetMangaList(page string) ([]string, error) {
 	ctx, cancel := chromedp.NewContext(ctxWithTimeout)
 	defer cancel()
 
-	var links []string
+	// var links []string
+	var jsonData string
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.Sleep(2*time.Second),
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
 		chromedp.Sleep(5*time.Second),
-		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll('div.group.relative.w-full a[href^="/title/"]'))
-				.map(a => a.href)
-		`, &links),
+		chromedp.Evaluate(`(() => {
+			return JSON.stringify(
+				Array.from(document.querySelectorAll('div.group.relative.w-full a[href^="/title/"]'))
+					.map(a => {
+						const img = a.querySelector("img");
+						return {
+							title: img?.alt || img?.title || "",
+							url: a.href
+						};
+					})
+			);
+		})()`, &jsonData),
 	)
 
 	if err != nil {
 		log.Printf("Load manga list Err %v", err)
 		return nil, err
 	}
-	return links, nil
+
+	var mangaList []MangaList
+	if err := json.Unmarshal([]byte(jsonData), &mangaList); err != nil {
+		log.Printf("Unmarshal manga list error: %v", err)
+		return nil, err
+	}
+
+	return mangaList, nil
 }
 
 func (pm *ParserManager) GetImgFromChapter(url string) ([]string, error) {
@@ -119,9 +143,9 @@ func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 	chromeCtx, cancelChrome := chromedp.NewContext(ctx)
 	defer cancelChrome()
 
-	var Chapters []string
 	MaxChapters := 150
 
+	var Chapters []string
 	err := chromedp.Run(chromeCtx,
 		chromedp.Navigate(url),
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),

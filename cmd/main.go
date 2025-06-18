@@ -1,73 +1,22 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
 	"log"
 	"log/slog"
 	"mangadex/db"
-	"mime"
-	"net/http"
+	"mangadex/parser/proxy"
+	"mangadex/parser/tasks"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
+	"time"
 
-	"github.com/chai2010/webp"
 	_ "github.com/lib/pq"
-	"github.com/minio/minio-go/v7"
 )
-
-func ConvertToWebp(img image.Image) ([]byte, error) {
-	var buf bytes.Buffer
-	err := webp.Encode(&buf, img, &webp.Options{Lossless: false, Quality: 78})
-	if err != nil {
-		return nil, fmt.Errorf("webp encode failed: %w", err)
-	}
-	return buf.Bytes(), nil
-}
-
-func filterImg(resp *http.Response, url string) ([]byte, string, error) {
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		ext := filepath.Ext(url)
-		contentType = mime.TypeByExtension(ext)
-	}
-	slog.Info("Processing image", "contentType", contentType, "url", url)
-
-	imgBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, contentType, fmt.Errorf("read body: %w", err)
-	}
-	if len(imgBytes) == 0 {
-		return nil, contentType, fmt.Errorf("empty image data")
-	}
-
-	switch contentType {
-	case "image/webp":
-		return imgBytes, "image/webp", nil
-
-	case "image/jpeg", "image/jpg", "image/png", "image/gif":
-		img, _, err := image.Decode(bytes.NewReader(imgBytes))
-		if err != nil {
-			return nil, contentType, fmt.Errorf("image decode failed: %w", err)
-		}
-		imgBytes, err := ConvertToWebp(img)
-		if err != nil {
-			return nil, "image/webp", fmt.Errorf("convert to webp failed: %w", err)
-		}
-		return imgBytes, "image/webp", nil
-
-	default:
-		return nil, "", fmt.Errorf("unsupported image format: %s", contentType)
-	}
-}
 
 //		@title			Unofficial MangaDex API
 //		@version		0.1
@@ -81,55 +30,60 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	url := "https://cdn4.mangaclash.com/chainsaw-man-20461/chapter-205/15.jpg"
-
-	resp, err := http.Get(url)
+	db, err := db.DBConn(ctx)
 	if err != nil {
-		slog.Warn("http get failed", "err", err)
-		return
+		log.Fatalf("DB conn %w", err)
 	}
-	defer resp.Body.Close()
+	// url := "https://cdn4.mangaclash.com/chainsaw-man-20461/chapter-205/15.jpg"
 
-	imgBytes, contentType, err := filterImg(resp, url)
-	if err != nil {
-		slog.Warn("image processing failed", "err", err)
-		return
-	}
+	// resp, err := http.Get(url)
+	// if err != nil {
+	// 	slog.Warn("http get failed", "err", err)
+	// 	return
+	// }
+	// defer resp.Body.Close()
 
-	bucketName := "mangaParse"
-	objectName := "55150-en-jujutsu-kaisen/8218084-chapter-24v5.webp"
-
-	uploadInfo, err := s3bucket.PutObject(ctx, bucketName, objectName,
-		bytes.NewReader(imgBytes), int64(len(imgBytes)), minio.PutObjectOptions{
-			ContentType: contentType,
-		})
-	if err != nil {
-		slog.Warn("bucket upload failed", "err", err)
-		return
-	}
-
-	log.Printf("Uploaded to bucket: %+v", uploadInfo)
-	// times := time.Now()
-
-	// proxyManager := proxy.NewProxyManager(500)
-	// go proxyManager.InitProxyManager(ctx)
-	// go proxyManager.AutoCleanup(ctx, 10*time.Second)
-
-	// for {
-	// 	if proxyManager.GetProxyCount() >= 25 {
-	// 		break
-	// 	}
-	// 	slog.Info("Waiting for proxies to be ready...",
-	// 		"current", proxyManager.GetProxyCount(),
-	// 		"required", proxyManager.MaxConn)
-	// 	time.Sleep(2 * time.Minute)
+	// imgBytes, contentType, err := filterImg(resp, url)
+	// if err != nil {
+	// 	slog.Warn("image processing failed", "err", err)
+	// 	return
 	// }
 
-	// taskMng := tasks.NewTaskManager(ctx, proxyManager, s3bucket)
-	// taskMng.Start()
+	// bucketName := "mangapark"
+	// objectName := "55150-en-jujutsu-kaisen/8218084-chapter-24v8.webp"
 
-	// log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
-	// log.Printf("elapsed %v", time.Since(times))
+	// uploadInfo, err := s3bucket.PutObject(ctx, bucketName, objectName,
+	// 	bytes.NewReader(imgBytes), int64(len(imgBytes)), minio.PutObjectOptions{
+	// 		ContentType: contentType,
+	// 	})
+	// if err != nil {
+	// 	slog.Warn("bucket upload failed", "err", err)
+	// 	return
+	// }
+
+	// log.Printf("Uploaded to bucket: %+v", uploadInfo)
+
+	times := time.Now()
+
+	proxyManager := proxy.NewProxyManager(700)
+	go proxyManager.InitProxyManager(ctx)
+	go proxyManager.AutoCleanup(ctx, 3*time.Second)
+
+	for {
+		if proxyManager.GetProxyCount() >= 20 {
+			break
+		}
+		slog.Info("Waiting for proxies to be ready...",
+			"current", proxyManager.GetProxyCount(),
+			"required", proxyManager.MaxConn)
+		time.Sleep(30 * time.Second)
+	}
+
+	taskMng := tasks.NewTaskManager(ctx, proxyManager, db, s3bucket)
+	taskMng.Start()
+
+	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
+	log.Printf("elapsed %v", time.Since(times))
 	////////////////////
 	////////////////////
 	//////////////////////

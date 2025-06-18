@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -34,7 +33,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 30)
+	workerPool := make(chan struct{}, 100)
 
 	for {
 		select {
@@ -45,7 +44,7 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 			needed := pm.MaxConn - len(pm.ProxyClients)
 			pm.mu.RUnlock()
 
-			log.Printf("Needed %v", needed)
+			// log.Printf("Needed %v", needed)
 			if needed <= 0 {
 				time.Sleep(500 * time.Millisecond)
 				continue
@@ -65,7 +64,7 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 
 func (pm *ProxyManager) GetAvailableProxyClient() *ProxyClient {
 	pm.mu.RLock()
-	slog.Info("Proxy stats", "total", len(pm.ProxyClients), "needed", pm.MaxConn)
+	// slog.Info("Proxy stats", "total", len(pm.ProxyClients), "needed", pm.MaxConn)
 
 	for _, v := range pm.ProxyClients {
 		if !v.Busy && v.Status {

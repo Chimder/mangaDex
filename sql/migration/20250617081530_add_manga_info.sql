@@ -10,7 +10,7 @@ CREATE TABLE manga (
     title varchar(255) UNIQUE NOT NULL,
     cover_url text NOT NULL,
     alt_titles text [] NOT NULL,
-    status boolean NOT NULL DEFAULT true,
+    status varchar(255) NOT NULL DEFAULT true,
     authors text [] NOT NULL,
     description text NOT NULL,
     genres text [] NOT NULL,
@@ -35,5 +35,6 @@ CREATE INDEX idx_manga_id ON manga (id);
 
 -- +goose Down
 -- +goose StatementBegin
+DROP TABLE IF EXISTS chapter; -- noqa:
 DROP TABLE IF EXISTS manga; -- noqa:
 -- +goose StatementEnd
