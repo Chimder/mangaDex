@@ -44,7 +44,6 @@ func (pc *ProxyClient) MarkAsNotBusy() {
 }
 
 func (pc *ProxyClient) MarkAsBad() {
-	slog.Info("MarkAsBad", "#", pc.Addr)
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	pc.Status = false
@@ -83,6 +82,31 @@ var testUrl = []string{
 	// "https://mangapark.io/reports?where=all&status=unread_and_unsolved",
 }
 
+func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
+	proxyUrl, err := url.Parse(pc.Addr)
+	if err != nil {
+		slog.Error("Failed to parse proxy http client", ":", pc.Addr, "err:", err)
+		return nil, err
+	}
+	transport := &http.Transport{
+		Proxy:                 http.ProxyURL(proxyUrl),
+		MaxIdleConns:          10,
+		IdleConnTimeout:       15 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Second,
+		TLSHandshakeTimeout:   2 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 10 * time.Second,
+		}).DialContext,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   15 * time.Second,
+	}
+
+	return client, nil
+}
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	randIndex := rand.Intn(len(testUrl))
 	serviceURL := testUrl[randIndex]

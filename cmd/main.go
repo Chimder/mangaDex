@@ -34,35 +34,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("DB conn %w", err)
 	}
-	// url := "https://cdn4.mangaclash.com/chainsaw-man-20461/chapter-205/15.jpg"
-
-	// resp, err := http.Get(url)
-	// if err != nil {
-	// 	slog.Warn("http get failed", "err", err)
-	// 	return
-	// }
-	// defer resp.Body.Close()
-
-	// imgBytes, contentType, err := filterImg(resp, url)
-	// if err != nil {
-	// 	slog.Warn("image processing failed", "err", err)
-	// 	return
-	// }
-
-	// bucketName := "mangapark"
-	// objectName := "55150-en-jujutsu-kaisen/8218084-chapter-24v8.webp"
-
-	// uploadInfo, err := s3bucket.PutObject(ctx, bucketName, objectName,
-	// 	bytes.NewReader(imgBytes), int64(len(imgBytes)), minio.PutObjectOptions{
-	// 		ContentType: contentType,
-	// 	})
-	// if err != nil {
-	// 	slog.Warn("bucket upload failed", "err", err)
-	// 	return
-	// }
-
-	// log.Printf("Uploaded to bucket: %+v", uploadInfo)
-
+	///////////////////////////////////////////////////////
+	// url := "https://mangapark.io/title/49567-en-goblin-slayer/9150991-vol-14-ch-094"
+	// parser.TestMangaChapterTask(ctx, url, s3bucket)
+	///////////////////////////////////////////////////////
 	times := time.Now()
 
 	proxyManager := proxy.NewProxyManager(700)
@@ -84,7 +59,8 @@ func main() {
 
 	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
 	log.Printf("elapsed %v", time.Since(times))
-	////////////////////
+	//////////////////////////////////////////////////////////////////////////////////////////
+
 	////////////////////
 	//////////////////////
 	//////////////////////

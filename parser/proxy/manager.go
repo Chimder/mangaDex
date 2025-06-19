@@ -2,7 +2,10 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math/rand"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -21,6 +24,7 @@ func NewProxyManager(maxConn int) *ProxyManager {
 		MaxConn:      maxConn,
 	}
 }
+
 func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 	addresses, err := GetTxtProxy()
 	if err != nil {
@@ -109,6 +113,29 @@ func (pm *ProxyManager) GetAvailableProxyClient() *ProxyClient {
 
 	slog.Info("Using untested proxy", "", addr)
 	return client
+}
+
+func (pm *ProxyManager) GetRandomProxyHttpClient() (*http.Client, error) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if len(pm.AllAddresses) == 0 {
+		return nil, fmt.Errorf("Len allAddresses is 0")
+	}
+
+	randIndex := rand.Intn(len(pm.AllAddresses))
+	addr := pm.AllAddresses[randIndex]
+	// pm.NextIndexAddres++
+
+	client := CreateProxyClient(addr)
+	if client == nil {
+		return nil, fmt.Errorf("Err random proxy client is nil")
+	}
+	httpClient, err := client.GetProxyHttpClient()
+	if err != nil {
+		return nil, fmt.Errorf("Err create random http proxy client: %w ", err)
+	}
+	return httpClient, nil
 }
 
 func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {

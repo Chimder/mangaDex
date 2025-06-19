@@ -1,11 +1,13 @@
 package tasks
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"mangadex/parser/proxy"
 	"mangadex/parser/query"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -77,6 +79,7 @@ func (tm *TaskManager) Start() {
 					return
 				}
 
+				tm.pageWaitGroup.Add(1)
 				workerSemaphore <- struct{}{}
 				go func(taskToProcess *task) {
 					defer func() {
@@ -147,7 +150,7 @@ func (tm *TaskManager) processPages() {
 			for _, manga := range mangaLists {
 				mangaId, err := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, manga.Title)
 				if err != nil && mangaId == "" {
-					slog.Error("Failed to check manga existence", "title", manga.Title, "err", err)
+					slog.Error("Manga not exist in DB", "title", manga.Title, "err", err)
 					infoTask = &task{
 						ID:   fmt.Sprintf("manga_info:%s", manga.URL),
 						Type: MangaInfoType,
@@ -211,9 +214,10 @@ func (tm *TaskManager) handleChapterUpdateInfoTask(t *task) {
 	if len(newChapters) <= oldChapters.ChaptersAmount {
 		for _, img := range newChapters[0:oldChapters.ChaptersAmount] {
 			chapterImgTask := &task{
-				ID:   fmt.Sprintf("Chapter_img:%s", img),
-				Type: MangaChapterType,
-				URL:  img,
+				ID:      fmt.Sprintf("Chapter_img:%s", img),
+				Type:    MangaChapterType,
+				URL:     img,
+				MangaId: oldChapters.MangaID.String(),
 			}
 			select {
 			case tm.taskChan <- chapterImgTask:
@@ -256,9 +260,10 @@ func (tm *TaskManager) handleMangaInfoTask(t *task) {
 	}
 	for _, img := range mangaInfo.Chapters {
 		chapterImgTask := &task{
-			ID:   fmt.Sprintf("Chapter_img:%s", img),
-			Type: MangaChapterType,
-			URL:  img,
+			ID:      fmt.Sprintf("Chapter_img:%s", img),
+			Type:    MangaChapterType,
+			URL:     img,
+			MangaId: mangaId,
 		}
 		select {
 		case tm.taskChan <- chapterImgTask:
@@ -281,8 +286,7 @@ func (tm *TaskManager) handleMangaChapterTask(t *task) {
 	}
 
 	parser := query.NewParserManager(client.Addr)
-	images, err := parser.GetImgFromChapter(t.URL)
-
+	chapterInfo, err := parser.GetImgFromChapter(t.URL)
 	if err != nil {
 		client.MarkAsBad()
 		slog.Error("Err to get chap imgs", "url", t.URL, "error", err, "retry", t.RetryCount)
@@ -290,8 +294,80 @@ func (tm *TaskManager) handleMangaChapterTask(t *task) {
 		return
 	}
 
+	var httpClient *http.Client
+	httpClient, err = client.GetProxyHttpClient()
+	if err != nil {
+		client.MarkAsBad()
+		slog.Error("Http client is nil", "url", t.URL, "error", err, "retry", t.RetryCount)
+		tm.retryTask(t)
+		return
+	}
+
+	reqCtx, cancel := context.WithTimeout(tm.ctx, 8*time.Second)
+	defer cancel()
+	var imgWG sync.WaitGroup
+
+	for i, url := range chapterInfo.Images {
+		imgWG.Add(1)
+		go func(url string) {
+			defer imgWG.Done()
+			var imgBytes []byte
+			var contentType string
+			var err error
+
+			var tryCount int
+
+			for tryCount <= 20 {
+				if tryCount > 0 {
+					httpClient, err = tm.proxyManager.GetRandomProxyHttpClient()
+					if err != nil {
+						tryCount++
+						continue
+					}
+				}
+				req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+				if err != nil {
+					tryCount++
+					continue
+				}
+				resp, err := httpClient.Do(req)
+				if err != nil {
+					tryCount++
+					continue
+				}
+				defer resp.Body.Close()
+
+				imgBytes, contentType, err = query.FilterImg(resp, url)
+				if err != nil || len(imgBytes) == 0 {
+					tryCount++
+					slog.Warn("image processing failed", "err", err)
+					continue
+				}
+				break
+			}
+
+			bucketName := "mangapark"
+			objectName := fmt.Sprintf(`%s/%s/%02d%s`, t.MangaId, chapterInfo.Name, i+1, contentType)
+			// objectName := fmt.Sprintf(`%s/%s/%s%s`, t.MangaId, chapterInfo.Name, strconv.Itoa(i), contentType)
+
+			if len(imgBytes) == 0 {
+				slog.Warn("skip upload: empty image bytes", "url", url)
+				return
+			}
+			_, err = tm.bucket.PutObject(tm.ctx, bucketName, objectName,
+				bytes.NewReader(imgBytes), int64(len(imgBytes)), minio.PutObjectOptions{
+					ContentType: contentType,
+				})
+			if err != nil {
+				slog.Error("bucket upload failed", "err", err)
+				return
+			}
+		}(url)
+	}
+
+	imgWG.Wait()
 	client.MarkAsNotBusy()
-	slog.Info("Get chapters img", "url", t.URL, "imgs", len(images))
+	slog.Warn("Download and save all chapter imgs", "url", t.URL, "imgs", len(chapterInfo.Images))
 }
 
 func (tm *TaskManager) retryTask(t *task) {
@@ -305,7 +381,6 @@ func (tm *TaskManager) retryTask(t *task) {
 
 	slog.Info("Retrying task", "task", t.ID, "retry", t.RetryCount)
 
-	tm.pageWaitGroup.Add(1)
 	go func() {
 		select {
 		case <-tm.ctx.Done():

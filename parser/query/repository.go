@@ -44,8 +44,9 @@ func NewMangaRepository(db *pgxpool.Pool) MangaRepository {
 }
 
 type MangaChaptersInfo struct {
-	Id             uuid.UUID `db:"id"`
+	ID             uuid.UUID `db:"id"`
 	Title          string    `db:"title"`
+	MangaID        uuid.UUID `db:"manga_id"`
 	LastChapter    float64   `db:"last_chapter"`
 	ChaptersAmount int       `db:"chapters_amount"`
 }
@@ -65,7 +66,7 @@ func (r *mangaRepository) ExistsMangaByTitle(ctx context.Context, title string) 
 }
 
 func (r *mangaRepository) GetMangaChaptersById(ctx context.Context, id string) (MangaChaptersInfo, error) {
-	query := `SELECT (last_chapter, chapters_amount) FROM manga WHERE id = $1`
+	query := `SELECT (last_chapter, chapters_amount, manga_id) FROM manga WHERE id = $1`
 	rows, err := r.db.Query(ctx, query, id)
 	if err != nil {
 		return MangaChaptersInfo{}, fmt.Errorf("err fetch user stats  %w", err)

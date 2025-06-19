@@ -19,10 +19,11 @@ type ParserManager struct {
 }
 
 func NewParserManager(proxyUrl string) *ParserManager {
+	// func NewParserManager() *ParserManager {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath("/usr/bin/google-chrome"),
 		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"),
-		chromedp.ProxyServer(proxyUrl),
+		// chromedp.ProxyServer(proxyUrl),
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("disable-web-security", true),
 	)
@@ -84,13 +85,19 @@ func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
 	return mangaList, nil
 }
 
-func (pm *ParserManager) GetImgFromChapter(url string) ([]string, error) {
+type ChapterInfo struct {
+	Name   string
+	Images []string
+}
+
+func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 	ctx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
-	var images []string
+	log.Print("parsed.....")
+	var chapter ChapterInfo
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
@@ -118,19 +125,23 @@ func (pm *ParserManager) GetImgFromChapter(url string) ([]string, error) {
 		chromedp.Sleep(1*time.Second),
 		chromedp.Evaluate(`Array.from(
 			document.querySelectorAll("div.grid.gap-0.grid-cols-1 div[data-name='image-item'] img")
-		).map(img => img.currentSrc)`, &images),
+		).map(img => img.currentSrc)`, &chapter.Images),
+		chromedp.Text(`.comic-detail h6 .opacity-80`, &chapter.Name, chromedp.ByQuery),
+		// chromedp.Evaluate(`
+		//     const span = document.querySelector('.comic-detail .opacity-80');
+		//     span ? span.textContent.trim() : '';
+		// `, &chapter.Name),
 	)
-
 	if err != nil {
-		return nil, err
+		return ChapterInfo{}, err
 	}
 
-	if len(images) == 0 {
-		return nil, err
+	if len(chapter.Images) == 0 {
+		return ChapterInfo{}, err
 	}
-	log.Printf("IMGSS %v\n", images)
+	log.Printf("IMGSS %v\n", len(chapter.Images))
 
-	return images, nil
+	return chapter, nil
 }
 
 func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
@@ -143,7 +154,7 @@ func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 	chromeCtx, cancelChrome := chromedp.NewContext(ctx)
 	defer cancelChrome()
 
-	MaxChapters := 150
+	MaxChapters := 15
 
 	var Chapters []string
 	err := chromedp.Run(chromeCtx,
@@ -191,7 +202,7 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 	defer cancelChrome()
 
 	var mangaInfo MangaInfoParserResp
-	MaxChapters := 150
+	MaxChapters := 15
 
 	err := chromedp.Run(chromeCtx,
 		chromedp.Navigate(url),

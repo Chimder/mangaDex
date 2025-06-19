@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/chai2010/webp"
 )
@@ -22,38 +23,50 @@ func ConvertToWebp(img image.Image) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func filterImg(resp *http.Response, url string) ([]byte, string, error) {
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		ext := filepath.Ext(url)
-		contentType = mime.TypeByExtension(ext)
+func normalizeExt(ext string) string {
+	ext = strings.ToLower(ext)
+	if ext == "" {
+		return ".bin"
 	}
-	slog.Info("Processing image", "contentType", contentType, "url", url)
+	if !strings.HasPrefix(ext, ".") {
+		return "." + ext
+	}
+	return ext
+}
 
+func FilterImg(resp *http.Response, url string) ([]byte, string, error) {
 	imgBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, contentType, fmt.Errorf("read body: %w", err)
+		return nil, "", fmt.Errorf("read body: %w", err)
 	}
 	if len(imgBytes) == 0 {
-		return nil, contentType, fmt.Errorf("empty image data")
+		return nil, "", fmt.Errorf("empty image data")
 	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = mime.TypeByExtension(filepath.Ext(url))
+	}
+	ext := normalizeExt(filepath.Ext(url))
 
 	switch contentType {
 	case "image/webp":
-		return imgBytes, "image/webp", nil
+		return imgBytes, ".webp", nil
 
 	case "image/jpeg", "image/jpg", "image/png", "image/gif":
 		img, _, err := image.Decode(bytes.NewReader(imgBytes))
 		if err != nil {
-			return nil, contentType, fmt.Errorf("image decode failed: %w", err)
+			slog.Warn("image decode failed", "err", err)
+			return imgBytes, ext, nil
 		}
-		imgBytes, err := ConvertToWebp(img)
+		webpBytes, err := ConvertToWebp(img)
 		if err != nil {
-			return nil, "image/webp", fmt.Errorf("convert to webp failed: %w", err)
+			slog.Warn("webp convert failed", "err", err)
+			return imgBytes, ext, nil
 		}
-		return imgBytes, "image/webp", nil
+		return webpBytes, ".webp", nil
 
 	default:
-		return nil, "", fmt.Errorf("unsupported image format: %s", contentType)
+		return imgBytes, ext, nil
 	}
 }
