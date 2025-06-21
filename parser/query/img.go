@@ -36,6 +36,7 @@ func normalizeExt(ext string) string {
 
 func FilterImg(resp *http.Response, url string) ([]byte, string, error) {
 	imgBytes, err := io.ReadAll(resp.Body)
+	// log.Printf("Start Filter",":",url)
 	if err != nil {
 		return nil, "", fmt.Errorf("read body: %w", err)
 	}

@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -206,6 +207,7 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+	log.Printf("Add %s", client.Addr)
 
 	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
 		client.Status = true

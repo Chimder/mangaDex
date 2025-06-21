@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,14 +20,29 @@ type ParserManager struct {
 }
 
 func NewParserManager(proxyUrl string) *ParserManager {
-	// func NewParserManager() *ParserManager {
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath("/usr/bin/google-chrome"),
-		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"),
-		// chromedp.ProxyServer(proxyUrl),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-web-security", true),
-	)
+	var opts []chromedp.ExecAllocatorOption
+
+	if strings.HasPrefix(proxyUrl, "socks5://") {
+		opts = append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath("/usr/bin/google-chrome"),
+			chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"),
+			chromedp.Flag("proxy-server", proxyUrl),
+			chromedp.Flag("allow-insecure-localhost", true),
+			chromedp.Flag("ignore-certificate-errors", true),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-web-security", true),
+		)
+	} else {
+		opts = append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath("/usr/bin/google-chrome"),
+			chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"),
+			chromedp.ProxyServer(proxyUrl),
+			chromedp.Flag("allow-insecure-localhost", true),
+			chromedp.Flag("ignore-certificate-errors", true),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-web-security", true),
+		)
+	}
 
 	return &ParserManager{allocOpts: opts}
 }
@@ -93,53 +109,69 @@ type ChapterInfo struct {
 func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
+
 	ctx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
-	log.Print("parsed.....")
+	log.Print("Start parsing chapter:", url)
+
 	var chapter ChapterInfo
+
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
-		chromedp.Sleep(2*time.Second),
+		chromedp.Sleep(5*time.Second),
+
 		chromedp.Evaluate(`(async () => {
-			function sleep(ms) {
-				return new Promise(resolve => setTimeout(resolve, ms));
-			}
-			let lastHeight = 0;
-			let tries = 0;
-			while (tries < 6) {
+			const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+			const getLoadedCount = () => {
+				const imgs = Array.from(document.querySelectorAll("div[data-name='image-item'] img"));
+				return imgs.filter(img => img.complete && img.currentSrc && img.currentSrc.trim() !== "").length;
+			};
+
+			let prevCount = 0;
+			let stableTries = 0;
+			const maxTries = 25;
+
+			for (let i = 0; i < maxTries; i++) {
 				window.scrollTo(0, document.body.scrollHeight);
 				await sleep(1000);
-				const newHeight = document.body.scrollHeight;
-				if (newHeight === lastHeight) {
-					tries++;
+
+				const curCount = getLoadedCount();
+				if (curCount === prevCount) {
+					stableTries++;
+					if (stableTries >= 3) break;
 				} else {
-					lastHeight = newHeight;
-					tries = 0;
+					stableTries = 0;
+					prevCount = curCount;
 				}
 			}
-			return true;
 		})()`, nil),
 
-		chromedp.Sleep(1*time.Second),
-		chromedp.Evaluate(`Array.from(
-			document.querySelectorAll("div.grid.gap-0.grid-cols-1 div[data-name='image-item'] img")
-		).map(img => img.currentSrc)`, &chapter.Images),
+		chromedp.Evaluate(`(() => {
+			const seen = new Set();
+			return Array.from(document.querySelectorAll("div[data-name='image-item'] img"))
+				.map(img => img.currentSrc)
+				.filter(src => {
+					if (!src || !src.trim() || seen.has(src)) return false;
+					seen.add(src);
+					return true;
+				});
+		})()`, &chapter.Images),
+
 		chromedp.Text(`.comic-detail h6 .opacity-80`, &chapter.Name, chromedp.ByQuery),
-		// chromedp.Evaluate(`
-		//     const span = document.querySelector('.comic-detail .opacity-80');
-		//     span ? span.textContent.trim() : '';
-		// `, &chapter.Name),
 	)
+
 	if err != nil {
+		log.Printf("Error parsing chapter page: %v", err)
 		return ChapterInfo{}, err
 	}
 
 	if len(chapter.Images) == 0 {
-		return ChapterInfo{}, err
+		return ChapterInfo{}, fmt.Errorf("no valid images found after scroll")
 	}
-	log.Printf("IMGSS %v\n", len(chapter.Images))
+
+	log.Printf("Parsed %d images from chapter %q", len(chapter.Images), chapter.Name)
 
 	return chapter, nil
 }

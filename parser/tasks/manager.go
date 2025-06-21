@@ -55,7 +55,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 		proxyManager: proxyMng,
 		bucket:       bucket,
 		mangaRepo:    query.NewMangaRepository(db),
-		maxWorkers:   20,
+		maxWorkers:   32,
 		currentPage:  1,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -303,7 +303,7 @@ func (tm *TaskManager) handleMangaChapterTask(t *task) {
 		return
 	}
 
-	reqCtx, cancel := context.WithTimeout(tm.ctx, 8*time.Second)
+	reqCtx, cancel := context.WithTimeout(tm.ctx, 15*time.Second)
 	defer cancel()
 	var imgWG sync.WaitGroup
 
@@ -348,7 +348,6 @@ func (tm *TaskManager) handleMangaChapterTask(t *task) {
 
 			bucketName := "mangapark"
 			objectName := fmt.Sprintf(`%s/%s/%02d%s`, t.MangaId, chapterInfo.Name, i+1, contentType)
-			// objectName := fmt.Sprintf(`%s/%s/%s%s`, t.MangaId, chapterInfo.Name, strconv.Itoa(i), contentType)
 
 			if len(imgBytes) == 0 {
 				slog.Warn("skip upload: empty image bytes", "url", url)

@@ -25,27 +25,27 @@ import (
 func main() {
 	LoggerInit()
 	slog.Info("Start server")
-
-	s3bucket := db.StorageBucket()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	s3bucket := db.StorageBucket()
+
+	/////////////////////////////////////////////////////
+	// url := "https://mangapark.io/title/10749-en-one-punch-man/8596918-punch-202"
+	// parser.TestMangaChapterTask(ctx, url, s3bucket)
+	/////////////////////////////////////////////////////
 	db, err := db.DBConn(ctx)
 	if err != nil {
-		log.Fatalf("DB conn %w", err)
+		log.Fatalf("DB conn %v", err)
 	}
-	///////////////////////////////////////////////////////
-	// url := "https://mangapark.io/title/49567-en-goblin-slayer/9150991-vol-14-ch-094"
-	// parser.TestMangaChapterTask(ctx, url, s3bucket)
-	///////////////////////////////////////////////////////
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(700)
+	proxyManager := proxy.NewProxyManager(50)
 	go proxyManager.InitProxyManager(ctx)
 	go proxyManager.AutoCleanup(ctx, 3*time.Second)
 
 	for {
-		if proxyManager.GetProxyCount() >= 20 {
+		if proxyManager.GetProxyCount() >= 30 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",
