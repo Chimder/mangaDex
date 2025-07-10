@@ -190,7 +190,7 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 	for i, url := range chapterInfo.Images {
 		imgWG.Add(1)
-		go func(url string, i int) {
+		go func(url string, idx int) {
 			defer imgWG.Done()
 			var imgBytes []byte
 			var contentType string
@@ -200,7 +200,6 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 			for i := range maxRetries {
 				if i > 0 {
 					httpClient = tm.proxyManager.GetAvailableProxyClient().Client
-					slog.Warn("Get New Client Img", "Idx", i, "nil", httpClient)
 				}
 
 				req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
@@ -226,21 +225,21 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 					continue
 				}
 
-				imgBytes, contentType, ext, err = query.FilterImg(resp, url)
+				imgBytes, ext, contentType, err = query.FilterImg(resp, url)
 				resp.Body.Close()
 				if err != nil || len(imgBytes) == 0 {
-					slog.Warn("skip upload: empty image bytes", "url", url)
+					slog.Warn("skip upload: empty image bytes1", "url", url)
 					continue
 				}
 				break
 			}
 			if len(imgBytes) == 0 {
-				slog.Warn("skip upload: empty image bytes", "url", url)
+				slog.Warn("skip upload: empty image bytes2", "url", url)
 				return
 			}
 
-			bucketName := "mangadex"
-			objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterInfo.Name, i+1, ext)
+			bucketName := "mangapark"
+			objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterInfo.Name, idx+1, ext)
 
 			_, err = tm.bucket.PutObject(tm.ctx, bucketName, objectName,
 				bytes.NewReader(imgBytes), int64(len(imgBytes)), minio.PutObjectOptions{

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"io"
-	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -47,7 +46,7 @@ func FilterImg(resp *http.Response, url string) ([]byte, string, string, error) 
 	}
 
 	ext, contentType := extractExtAndMime(url)
-	slog.Warn(":", "ext", ext, "Type", contentType, "URL:", url)
+	// slog.Warn(":", "ext", ext, "Type", contentType, "URL:", url)
 
 	switch contentType {
 	case "image/webp":
@@ -56,12 +55,12 @@ func FilterImg(resp *http.Response, url string) ([]byte, string, string, error) 
 	case "image/jpeg", "image/jpg", "image/png", "image/gif":
 		img, _, err := image.Decode(bytes.NewReader(imgBytes))
 		if err != nil {
-			slog.Warn("image decode failed", "err", err)
+			// slog.Warn("image decode failed", "err", err)
 			return imgBytes, ext, contentType, nil
 		}
 		webpBytes, err := ConvertToWebp(img)
 		if err != nil {
-			slog.Warn("webp convert failed", "err", err)
+			// slog.Warn("webp convert failed", "err", err)
 			return imgBytes, ext, contentType, nil
 		}
 		return webpBytes, ".webp", "image/webp", nil

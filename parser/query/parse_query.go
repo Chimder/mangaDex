@@ -60,7 +60,7 @@ func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
-	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 3*time.Minute)
+	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 2*time.Minute)
 	defer cancelCtxTime()
 
 	ctx, cancel := chromedp.NewContext(ctxWithTimeout)

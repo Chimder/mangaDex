@@ -45,7 +45,7 @@ func TestMangaChapterTask(ctx context.Context, urll string, bucket *minio.Client
 			defer imgWG.Done()
 			var imgBytes []byte
 			var contentType string
-			var err error
+			// var err error
 
 			var tryCount int
 			for tryCount <= 20 {
@@ -59,7 +59,7 @@ func TestMangaChapterTask(ctx context.Context, urll string, bucket *minio.Client
 
 				slog.Info("Succ down img", "I", i)
 				// imgBytes, contentType, err = query.FilterImg(resp, url)
-				if err != nil || len(imgBytes) == 0 {
+				if err!= nil || len(imgBytes) == 0 {
 					tryCount++
 					slog.Warn("image processing failed", "err", err)
 					continue

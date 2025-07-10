@@ -45,7 +45,7 @@ func main() {
 	go proxyManager.AutoCleanup(ctx, 3*time.Second)
 
 	for {
-		if proxyManager.GetProxyCount() >= 30 {
+		if proxyManager.GetProxyCount() >= 25 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",

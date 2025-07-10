@@ -5,6 +5,7 @@ import (
 	"log"
 	"log/slog"
 	"mangadex/config"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -13,30 +14,30 @@ import (
 func StorageBucket() *minio.Client {
 	url := config.LoadEnv()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	secure := true
+	if strings.Contains(url.Endpoint, "localhost") ||
+		strings.Contains(url.Endpoint, "127.0.0.1") {
+		secure = false
+	}
 
 	minioClient, err := minio.New(url.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(url.AccessKeyid, url.SecretAccessKey, ""),
-		Secure: true,
+		Secure: secure,
 	})
 	if err != nil {
-		log.Panicf("Err b2 minit conn: %v", err)
+		log.Panicf("MinIO connect error: %v", err)
 	}
 
-	bucketName := "mangadex"
+	ctx := context.Background()
+	bucketName := "mangapark"
+
 	exists, err := minioClient.BucketExists(ctx, bucketName)
 	if err != nil {
-		log.Printf("Err bucket exists: %v", err)
+		log.Printf("Error checking bucket: %v", err)
+	} else {
+		log.Printf("Bucket exists: %v", exists)
 	}
-	log.Printf("ISS %v", exists)
-	// if !exists {
-	// 	err := minioClient.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
-	// 	if err != nil {
-	// 		log.Fatalf("Err create Bucket: %v", err)
-	// 	}
-	// 	log.Printf("Created: %s", bucketName)
-	// }
-	slog.Info("B2 Bucket Ok")
+
+	slog.Info("MinIO connection OK")
 	return minioClient
 }
