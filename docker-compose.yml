@@ -10,8 +10,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - /mnt/x/docker_data/postgres:/var/lib/postgresql/mangapark
-      # - postgres_data:/var/lib/postgresql/mangapark
+      - pgdata:/var/lib/postgresql/data
     networks:
       - csTrade
 
@@ -45,7 +44,7 @@ services:
   #   restart: always
 
 volumes:
-  postgres_data:
+  pgdata:
   es_data:
 
 networks:

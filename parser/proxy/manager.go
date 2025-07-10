@@ -69,7 +69,6 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 
 func (pm *ProxyManager) GetAvailableProxyClient() *ProxyClient {
 	pm.mu.RLock()
-	// slog.Info("Proxy stats", "total", len(pm.ProxyClients), "needed", pm.MaxConn)
 
 	for _, v := range pm.ProxyClients {
 		if !v.Busy && v.Status {
@@ -95,12 +94,20 @@ func (pm *ProxyManager) GetAvailableProxyClient() *ProxyClient {
 		return nil
 	}
 
-	addr := pm.AllAddresses[pm.NextIndexAddres]
-	pm.NextIndexAddres++
+	var addr string
+	for {
+		addr = pm.AllAddresses[pm.NextIndexAddres]
+		pm.NextIndexAddres++
 
-	if existingClient, exists := pm.ProxyClients[addr]; exists {
-		existingClient.MarkAsBusy()
-		return existingClient
+		if existingClient, exists := pm.ProxyClients[addr]; exists {
+			if !existingClient.Busy {
+				existingClient.MarkAsBusy()
+				return existingClient
+			}
+			pm.NextIndexAddres++
+			continue
+		}
+		break
 	}
 
 	client := CreateProxyClient(addr)

@@ -55,7 +55,7 @@ func main() {
 	}
 
 	taskMng := tasks.NewTaskManager(ctx, proxyManager, db, s3bucket)
-	taskMng.Start()
+	taskMng.ProcessPages()
 
 	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
 	log.Printf("elapsed %v", time.Since(times))

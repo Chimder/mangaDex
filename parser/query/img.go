@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
-	"strings"
 
 	"github.com/chai2010/webp"
 )
@@ -22,52 +22,51 @@ func ConvertToWebp(img image.Image) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+func extractExtAndMime(urlStr string) (string, string) {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return "", ""
+	}
+	ext := filepath.Ext(u.Path)
 
-func normalizeExt(ext string) string {
-	ext = strings.ToLower(ext)
-	if ext == "" {
-		return ".bin"
+	var contentType string
+	if ext != "" {
+		contentType = mime.TypeByExtension(ext)
 	}
-	if !strings.HasPrefix(ext, ".") {
-		return "." + ext
-	}
-	return ext
+
+	return ext, contentType
 }
 
-func FilterImg(resp *http.Response, url string) ([]byte, string, error) {
+func FilterImg(resp *http.Response, url string) ([]byte, string, string, error) {
 	imgBytes, err := io.ReadAll(resp.Body)
-	// log.Printf("Start Filter",":",url)
 	if err != nil {
-		return nil, "", fmt.Errorf("read body: %w", err)
+		return nil, "", "", fmt.Errorf("read body: %w", err)
 	}
 	if len(imgBytes) == 0 {
-		return nil, "", fmt.Errorf("empty image data")
+		return nil, "", "", fmt.Errorf("empty image data")
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = mime.TypeByExtension(filepath.Ext(url))
-	}
-	ext := normalizeExt(filepath.Ext(url))
+	ext, contentType := extractExtAndMime(url)
+	slog.Warn(":", "ext", ext, "Type", contentType, "URL:", url)
 
 	switch contentType {
 	case "image/webp":
-		return imgBytes, ".webp", nil
+		return imgBytes, ".webp", "image/webp", nil
 
 	case "image/jpeg", "image/jpg", "image/png", "image/gif":
 		img, _, err := image.Decode(bytes.NewReader(imgBytes))
 		if err != nil {
 			slog.Warn("image decode failed", "err", err)
-			return imgBytes, ext, nil
+			return imgBytes, ext, contentType, nil
 		}
 		webpBytes, err := ConvertToWebp(img)
 		if err != nil {
 			slog.Warn("webp convert failed", "err", err)
-			return imgBytes, ext, nil
+			return imgBytes, ext, contentType, nil
 		}
-		return webpBytes, ".webp", nil
+		return webpBytes, ".webp", "image/webp", nil
 
 	default:
-		return imgBytes, ext, nil
+		return imgBytes, ext, contentType, nil
 	}
 }

@@ -24,12 +24,12 @@ func StorageBucket() *minio.Client {
 		log.Panicf("Err b2 minit conn: %v", err)
 	}
 
-	bucketName := "mangapark"
+	bucketName := "mangadex"
 	exists, err := minioClient.BucketExists(ctx, bucketName)
 	if err != nil {
 		log.Printf("Err bucket exists: %v", err)
 	}
-	log.Printf("ISS %v",exists)
+	log.Printf("ISS %v", exists)
 	// if !exists {
 	// 	err := minioClient.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
 	// 	if err != nil {
