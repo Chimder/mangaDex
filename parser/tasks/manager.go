@@ -52,49 +52,60 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 
 func (tm *TaskManager) ProcessPages() {
 	slog.Info("Starting task manager")
+	sem := make(chan struct{}, 10)
 
 	for {
 		select {
 		case <-tm.ctx.Done():
-			slog.Info("Page processing context stop.")
+			slog.Info("Stopping processing")
 			return
 		default:
 			client := tm.proxyManager.GetAvailableProxyClient()
 			if client == nil {
-				slog.Error("No proxies for fetch")
-				time.Sleep(1 * time.Second)
+				slog.Error("No proxies available")
+				time.Sleep(time.Second)
 				continue
 			}
 
-			parser := query.NewParserManager(client.Addr)
-			pageStr := strconv.Itoa(tm.currentPage)
-			mangaLists, err := parser.GetMangaList(pageStr)
+			mangaLists, err := query.NewParserManager(client.Addr).GetMangaList(strconv.Itoa(tm.currentPage))
+			client.MarkAsNotBusy()
+
 			if err != nil {
 				client.MarkAsBad()
 				slog.Error("Failed to get manga list", "page", tm.currentPage, "error", err)
-				time.Sleep(1 * time.Second)
+				time.Sleep(time.Second)
 				continue
 			}
-			client.MarkAsNotBusy()
 
 			if len(mangaLists) == 0 {
-				slog.Info("No manga found.", "page", tm.currentPage)
+				slog.Info("No manga found - stopping", "page", tm.currentPage)
 				tm.cancel()
 				return
 			}
 
-			slog.Info("Got manga list", "count", len(mangaLists), "page", tm.currentPage)
+			slog.Info("Processing manga list", "count", len(mangaLists), "page", tm.currentPage)
+			var wg sync.WaitGroup
 
 			for _, manga := range mangaLists {
-				mangaId, err := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, manga.Title)
-				if err != nil && mangaId == "" {
-					tm.handleMangaInfo(manga.URL)
-				} else {
-					slog.Warn("Update Chap Skip")
-					// tm.handleChapterUpdateInfo(mangaId, manga.URL)
-				}
+				sem <- struct{}{}
+				wg.Add(1)
+
+				go func(m query.MangaList) {
+					defer func() {
+						<-sem
+						wg.Done()
+					}()
+
+					mangaId, _ := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, m.Title)
+					if mangaId == "" {
+						tm.handleMangaInfo(m.URL)
+					} else {
+						slog.Warn("Skipping existing manga", "title", m.Title)
+					}
+				}(manga)
 			}
 
+			wg.Wait()
 			tm.currentPage++
 		}
 	}
@@ -138,6 +149,10 @@ func (tm *TaskManager) handleMangaInfo(URL string) {
 			continue
 		}
 		break
+	}
+	if mangaInfo == nil {
+		slog.Error("Max try parse manga info", "err:", errParse)
+		return
 	}
 
 	for _, url := range mangaInfo.Chapters {
@@ -184,7 +199,7 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 		break
 	}
 
-	reqCtx, cancel := context.WithTimeout(tm.ctx, 60*time.Second)
+	reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
 	defer cancel()
 	var imgWG sync.WaitGroup
 
@@ -204,37 +219,36 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 				req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 				if err != nil {
-					slog.Debug("Failed to create request", "url", url, "error", err)
 					continue
 				}
 
 				resp, err := httpClient.Do(req)
 				if err != nil {
-					slog.Debug("Request failed", "url", url, "error", err)
 					continue
 				}
+				defer func ()  {
+					resp.Body.Close()
+				}()
 
 				if resp == nil || resp.Body == nil {
-					slog.Debug("Nil response or body", "url", url)
+					// resp.Body.Close()
 					continue
 				}
 
 				if resp.ContentLength == 0 {
-					resp.Body.Close()
-					slog.Debug("Empty content", "url", url)
+					// resp.Body.Close()
 					continue
 				}
 
 				imgBytes, ext, contentType, err = query.FilterImg(resp, url)
-				resp.Body.Close()
+				// resp.Body.Close()
 				if err != nil || len(imgBytes) == 0 {
-					slog.Warn("skip upload: empty image bytes1", "url", url)
 					continue
 				}
 				break
 			}
 			if len(imgBytes) == 0 {
-				slog.Warn("skip upload: empty image bytes2", "url", url)
+				slog.Error("skip upload: empty image bytes", "url", url)
 				return
 			}
 
@@ -256,7 +270,6 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 	if client != nil {
 		client.MarkAsNotBusy()
 	}
-	slog.Warn("Download and save all chapter imgs", "url", URL, "imgs", len(chapterInfo.Images))
 }
 
 // func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {

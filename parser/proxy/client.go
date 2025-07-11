@@ -129,13 +129,6 @@ func CreateProxyClient(addr string) *ProxyClient {
 	}
 }
 
-var testUrl = []string{
-	"https://mangapark.io/docs",
-	"https://mangapark.io/signin",
-	"https://mangapark.io/mirrors",
-	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
-}
-
 func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
 	proxyUrl, err := url.Parse(pc.Addr)
 	if err != nil {
@@ -162,24 +155,40 @@ func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
 
 	return client, nil
 }
-func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
-	randIndex := rand.Intn(len(testUrl))
-	serviceURL := testUrl[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+// var testUrls = []string{
+// 	"https://mangapark.io/docs",
+// 	"https://mangapark.io/signin",
+// 	"https://mangapark.io/mirrors",
+// 	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
+// }
+
+var testUrls = []string{
+// "http://neverssl.com",
+"https://postman-echo.com/get",
+"https://ifconfig.me",
+"https://icanhazip.com",
+}
+
+func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
+	randIndex := rand.Intn(len(testUrls))
+	testURL := testUrls[randIndex]
+
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, "GET", serviceURL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, "GET", testURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Connection", "close")
+	req.Header.Set("Range", "bytes=0-15")
 
 	resp, err := pc.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %v", err)
+		return fmt.Errorf("proxy request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -187,9 +196,14 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 		return fmt.Errorf("status code %d", resp.StatusCode)
 	}
 
-	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
-	return err
+	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 16))
+	if err != nil {
+		return fmt.Errorf("failed to read response: %v", err)
+	}
+
+	return nil
 }
+
 func GetTxtProxy() ([]string, error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex

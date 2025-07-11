@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -38,7 +37,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 100)
+	workerPool := make(chan struct{}, 200)
 
 	for {
 		select {
@@ -214,7 +213,7 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	log.Printf("Add %s", client.Addr)
+	slog.Info("Add", ":", client.Addr)
 
 	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
 		client.Status = true

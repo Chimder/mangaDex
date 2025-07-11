@@ -7,16 +7,15 @@ import (
 	"log"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/chromedp/chromedp"
 )
 
 type ParserManager struct {
-	allocOpts   []chromedp.ExecAllocatorOption
-	allocCancel context.CancelFunc
-	mu          sync.RWMutex
+	allocOpts []chromedp.ExecAllocatorOption
+	// allocCancel context.CancelFunc
+	// mu          sync.RWMutex
 }
 
 func NewParserManager(proxyUrl string) *ParserManager {
@@ -70,9 +69,9 @@ func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
 	var jsonData string
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.Sleep(2*time.Second),
-		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
 		chromedp.Sleep(5*time.Second),
+		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
+		chromedp.Sleep(8*time.Second),
 		chromedp.Evaluate(`(() => {
 			return JSON.stringify(
 				Array.from(document.querySelectorAll('div.group.relative.w-full a[href^="/title/"]'))
@@ -88,7 +87,7 @@ func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
 	)
 
 	if err != nil {
-		log.Printf("Load manga list Err %v", err)
+		slog.Error("Load manga list", "Err:", err)
 		return nil, err
 	}
 
@@ -107,20 +106,22 @@ type ChapterInfo struct {
 }
 
 func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
+	slog.Warn("Start parsing img:", "url:", url)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
-	ctx, cancel := chromedp.NewContext(allocCtx)
-	defer cancel()
+	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 2*time.Minute)
+	defer cancelCtxTime()
 
-	log.Print("Start parsing chapter:", url)
+	ctx, cancel := chromedp.NewContext(ctxWithTimeout)
+	defer cancel()
 
 	var chapter ChapterInfo
 
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
-		chromedp.Sleep(5*time.Second),
+		chromedp.Sleep(8*time.Second),
 
 		chromedp.Evaluate(`(async () => {
 			const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -171,12 +172,11 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 		return ChapterInfo{}, fmt.Errorf("no valid images found after scroll")
 	}
 
-	log.Printf("Parsed %d images from chapter %q", len(chapter.Images), chapter.Name)
-
 	return chapter, nil
 }
 
 func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
+	slog.Debug("StartParseMangaChapters", "url", url)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
@@ -215,7 +215,7 @@ func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 		return nil, err
 	}
 	if len(Chapters) == 0 {
-		return nil, fmt.Errorf("Chapters not found.")
+		return nil, fmt.Errorf("chapters not found")
 	}
 	if len(Chapters) > MaxChapters {
 		Chapters = Chapters[0:MaxChapters]
@@ -224,6 +224,7 @@ func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 }
 
 func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) {
+	slog.Info("START MANGA INFO", ":", url)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
@@ -234,7 +235,7 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 	defer cancelChrome()
 
 	var mangaInfo MangaInfoParserResp
-	MaxChapters := 15
+	MaxChapters := 2
 
 	err := chromedp.Run(chromeCtx,
 		chromedp.Navigate(url),

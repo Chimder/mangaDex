@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,10 +99,8 @@ func (q *mangaRepository) InsertManga(ctx context.Context, arg MangaDB) (string,
 		"genres":      arg.Genres,
 	}).Scan(&id)
 	if err != nil {
-		slog.Info("INSERT INFO", "err", err, "id", id)
 		return id, err
 	}
-	slog.Info("INSERT INFO", "err", err, "id", id)
 
 	return id, err
 }
