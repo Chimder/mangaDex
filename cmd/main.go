@@ -8,8 +8,8 @@ import (
 	"log"
 	"log/slog"
 	"mangadex/db"
+	"mangadex/parser/mangapark"
 	"mangadex/parser/proxy"
-	"mangadex/parser/tasks"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,12 +40,11 @@ func main() {
 	}
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(200)
+	proxyManager := proxy.NewProxyManager(500)
 	go proxyManager.InitProxyManager(ctx)
-	go proxyManager.AutoCleanup(ctx, 3*time.Second)
 
 	for {
-		if proxyManager.GetProxyCount() >= 30 {
+		if proxyManager.GetProxyCount() >= 50 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",
@@ -54,7 +53,7 @@ func main() {
 		time.Sleep(30 * time.Second)
 	}
 
-	taskMng := tasks.NewTaskManager(ctx, proxyManager, db, s3bucket)
+	taskMng := mangapark.NewTaskManager(ctx, proxyManager, db, s3bucket)
 	taskMng.ProcessPages()
 
 	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))

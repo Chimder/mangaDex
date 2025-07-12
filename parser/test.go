@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"mangadex/parser/query"
+	"mangadex/parser/mangapark"
 	"net/http"
 	"sync"
 
@@ -23,7 +23,7 @@ type task struct {
 
 func TestMangaChapterTask(ctx context.Context, urll string, bucket *minio.Client) {
 	// proxyManager := proxy.NewProxyManager(10)
-	parser := query.NewParserManager("socks5://192.111.129.150:4145")
+	parser := mangapark.NewParserManager("socks5://192.111.129.150:4145")
 	log.Print("start parse")
 	chapterInfo, err := parser.GetImgFromChapter(urll)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestMangaChapterTask(ctx context.Context, urll string, bucket *minio.Client
 
 				slog.Info("Succ down img", "I", i)
 				// imgBytes, contentType, err = query.FilterImg(resp, url)
-				if err!= nil || len(imgBytes) == 0 {
+				if err != nil || len(imgBytes) == 0 {
 					tryCount++
 					slog.Warn("image processing failed", "err", err)
 					continue

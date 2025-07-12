@@ -37,6 +37,7 @@ func extractExtAndMime(urlStr string) (string, string) {
 }
 
 func FilterImg(resp *http.Response, url string) ([]byte, string, string, error) {
+	defer resp.Body.Close()
 	imgBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("read body: %w", err)

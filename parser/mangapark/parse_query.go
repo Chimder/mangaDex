@@ -1,4 +1,4 @@
-package query
+package mangapark
 
 import (
 	"context"
@@ -53,7 +53,7 @@ type MangaList struct {
 }
 
 func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
-	slog.Info("StartFetchMangaList", "page", page)
+	// slog.Info("StartFetchMangaList", "page", page)
 	url := fmt.Sprintf("https://mangapark.io/search?sortby=field_follow&page=%s", page)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
@@ -106,7 +106,6 @@ type ChapterInfo struct {
 }
 
 func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
-	slog.Warn("Start parsing img:", "url:", url)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
@@ -173,7 +172,9 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	}
 
 	return chapter, nil
+
 }
+
 
 func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 	slog.Debug("StartParseMangaChapters", "url", url)
@@ -211,7 +212,6 @@ func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 	)
 
 	if err != nil {
-		log.Printf("Error fetching data: %v", err)
 		return nil, err
 	}
 	if len(Chapters) == 0 {
@@ -224,7 +224,6 @@ func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
 }
 
 func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) {
-	slog.Info("START MANGA INFO", ":", url)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
@@ -311,32 +310,31 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 	)
 
 	if err != nil {
-		log.Printf("Error fetching data: %v", err)
 		return nil, err
 	}
 	if len(mangaInfo.Genres) == 0 {
-		return nil, fmt.Errorf("Genres not found.")
+		return nil, fmt.Errorf("genres not found")
 	}
 	if len(mangaInfo.Chapters) == 0 {
-		return nil, fmt.Errorf("Chapters not found.")
+		return nil, fmt.Errorf("chapters not found")
 	}
 	if len(mangaInfo.Chapters) > MaxChapters {
 		mangaInfo.Chapters = mangaInfo.Chapters[0:MaxChapters]
 	}
 	if len(mangaInfo.AltTitles) == 0 {
-		return nil, fmt.Errorf("AltTitles not found.")
+		return nil, fmt.Errorf("altTitles not found")
 	}
 	if len(mangaInfo.Authors) == 0 {
-		return nil, fmt.Errorf("Authors not found.")
+		return nil, fmt.Errorf("authors not found")
 	}
 	if mangaInfo.CoverURL == "" {
-		return nil, fmt.Errorf("CoverUrl not found.")
+		return nil, fmt.Errorf("coverUrl not found")
 	}
 	if mangaInfo.Description == "" {
-		return nil, fmt.Errorf("Description not found.")
+		return nil, fmt.Errorf("description not found")
 	}
 	if mangaInfo.Status == "" {
-		return nil, fmt.Errorf("Status not found.")
+		return nil, fmt.Errorf("status not found")
 	}
 
 	return &mangaInfo, nil
