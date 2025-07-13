@@ -71,7 +71,7 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 }
 
 func (pm *ProxyManager) GetAvailableProxyClient(ctx context.Context) *ProxyClient {
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {

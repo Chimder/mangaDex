@@ -1,6 +1,5 @@
 package mangadex
 
-
 import (
 	"bytes"
 	"context"
@@ -8,8 +7,6 @@ import (
 	"log/slog"
 	"mangadex/parser/proxy"
 	"mangadex/parser/query"
-	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -26,7 +23,7 @@ const (
 	MangaChapterUpdateType
 )
 
-const maxRetries = 7
+const maxRetries = 10
 
 type TaskManager struct {
 	mangaRepo    MangaRepository
@@ -35,6 +32,7 @@ type TaskManager struct {
 	currentPage  int
 	ctx          context.Context
 	cancel       context.CancelFunc
+	query        *Query
 	bucket       *minio.Client
 }
 
@@ -43,6 +41,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 	return &TaskManager{
 		proxyManager: proxyMng,
 		bucket:       bucket,
+		query:        NewQueryManager(),
 		mangaRepo:    NewMangaRepository(db),
 		maxWorkers:   32,
 		currentPage:  1,
@@ -54,6 +53,8 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 func (tm *TaskManager) ProcessPages() {
 	slog.Info("Starting task manager")
 	sem := make(chan struct{}, 3)
+	limit := 34
+	offset := 0
 
 	for {
 		select {
@@ -67,121 +68,114 @@ func (tm *TaskManager) ProcessPages() {
 				continue
 			}
 
-			mangaLists, err := NewQueryManager(client.Addr).GetMangaList(strconv.Itoa(tm.currentPage))
+			mangaLists, err := tm.query.GetMangaList(tm.ctx, limit, offset, client)
 			if err != nil {
+				slog.Error("GetList", ":", err)
 				client.MarkAsBad(tm.proxyManager)
 				continue
 			}
 			client.MarkAsNotBusy()
-
-			if len(mangaLists) == 0 {
+			if len(mangaLists.Data) == 0 {
 				slog.Info("No manga found - stopping", "page", tm.currentPage)
 				tm.cancel()
 				return
 			}
 
-			slog.Info("Processing manga list", "count", len(mangaLists), "page", tm.currentPage)
+			slog.Info("Processing manga list", "count", len(mangaLists.Data), "page", tm.currentPage)
 			var wg sync.WaitGroup
 
-			for _, manga := range mangaLists {
+			for _, manga := range mangaLists.Data {
 				sem <- struct{}{}
 				wg.Add(1)
 
-				go func(m MangaList) {
+				go func(m *MangaData) {
 					defer func() {
 						<-sem
 						wg.Done()
 					}()
-
-					mangaId, _ := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, m.Title)
+					mangaId, _ := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, m.Attributes.Title.En)
 					if mangaId == "" {
-						tm.handleMangaInfo(m.URL)
+						tm.handleMangaInfo(&manga)
 					} else {
-						slog.Warn("Skipping existing manga", "title", m.Title)
+						slog.Warn("Skipping existing manga", "title", m.Attributes.Title.En)
 					}
-				}(manga)
+				}(&manga)
 			}
 
 			wg.Wait()
+			offset += limit
 			tm.currentPage++
 		}
 	}
 }
 
-func (tm *TaskManager) handleMangaInfo(URL string) {
+func (tm *TaskManager) handleMangaInfo(manga *MangaData) {
 	var (
-		client    *proxy.ProxyClient
-		mangaInfo *MangaInfoParserResp
-		errParse  error
-		errDb     error
-		mangaId   string
-		chapWg    sync.WaitGroup
+		client      *proxy.ProxyClient
+		chapterData []ChapterList
+		errParse    error
+
+		errDb   error
+		mangaId string
+		chapWg  sync.WaitGroup
 	)
+
+	mangaId, errDb = tm.mangaRepo.InsertManga(tm.ctx, manga)
+	if errDb != nil || mangaId == "" {
+		// client.MarkAsBad(tm.proxyManager)
+		slog.Info("Failed insert manga info", "err:", errDb, "title", manga.Attributes.Title.En)
+		return
+	}
 
 	for i := range maxRetries {
 		client = tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if client == nil {
-			slog.Error("No available proxy", "url", URL, "retrie", i)
+			slog.Error("No available proxy", "manga", manga.Attributes.Title.En, "retrie", i)
 			continue
 		}
-		parser := NewParserManager(client.Addr)
-		mangaInfo, errParse = parser.GetMangaInfo(URL)
+		chapterData, errParse = tm.query.GetChapterListById(tm.ctx, manga.ID, client)
 		if errParse != nil {
 			client.MarkAsBad(tm.proxyManager)
-			slog.Error("Err to get manga info", "url", URL, "error", errParse, "retries", i)
-			continue
-		}
-		mangaId, errDb = tm.mangaRepo.InsertManga(tm.ctx, MangaDB{
-			Title:       mangaInfo.Title,
-			CoverUrl:    mangaInfo.CoverURL,
-			AltTitles:   mangaInfo.AltTitles,
-			Authors:     mangaInfo.Authors,
-			Status:      mangaInfo.Status,
-			Genres:      mangaInfo.Genres,
-			Description: mangaInfo.Description,
-		})
-		if errDb != nil || mangaId == "" {
-			client.MarkAsBad(tm.proxyManager)
-			slog.Info("Failed insert manga info", "title", mangaInfo.Title, "chapters", len(mangaInfo.Chapters), "retry", i)
+			slog.Error("Err to get manga info", "manga", manga.Attributes.Title.En, "error", errParse, "retries", i)
 			continue
 		}
 		break
 	}
-	if mangaInfo == nil {
+	if chapterData == nil {
 		slog.Error("Max try parse manga info", "err:", errParse)
 		return
 	}
 
-	for _, url := range mangaInfo.Chapters {
+	for _, c := range chapterData {
 		chapWg.Add(1)
-		go func(url string) {
+		go func(c ChapterList) {
 			defer chapWg.Done()
-			tm.handleMangaChapter(url, mangaId)
-		}(url)
+			tm.handleMangaChapter(mangaId, c.ID, c.ChapterNumber)
+		}(c)
 	}
 
 	chapWg.Wait()
 	client.MarkAsNotBusy()
-	slog.Info("Get manga info", "title", mangaInfo.Title, "chapters", len(mangaInfo.Chapters))
+	slog.Info("Get manga info", "title", manga.Attributes.Title.En, "chapters", len(chapterData))
 }
 
-func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
+func (tm *TaskManager) handleMangaChapter(mangaID string, chapterID string, chapterNum string) {
 	var client *proxy.ProxyClient
-	var chapterInfo ChapterInfo
+	var chapterImgs *ChapterImgsData
 	var err error
 	for i := range maxRetries {
 		client = tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if client == nil {
 			client.MarkAsBad(tm.proxyManager)
-			slog.Error("No available proxy for chap img", "url", URL, "retry", i)
+			slog.Error("No available proxy for chap img", "id", chapterID, "retry", i)
 			continue
 		}
 
-		parser := NewParserManager(client.Addr)
-		chapterInfo, err = parser.GetImgFromChapter(URL)
+		// parser := NewParserManager(client.Addr)
+		chapterImgs, err = tm.query.GetChapterimgsById(tm.ctx, chapterID, client)
 		if err != nil {
 			client.MarkAsBad(tm.proxyManager)
-			slog.Error("Err to get chap imgs", "url", URL, "error", err, "retry", i)
+			slog.Error("Err to get chap imgs", "id", chapterID, "error", err, "retry", i)
 			continue
 		}
 
@@ -193,13 +187,13 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 	defer cancel()
 
 	var imgWG sync.WaitGroup
-	imgWG.Add(len(chapterInfo.Images))
+	imgWG.Add(len(chapterImgs.imgLinks))
 
-	for i, url := range chapterInfo.Images {
-		go func(url string, idx int) {
+	for i, url := range chapterImgs.imgLinks {
+		go func(idx int, url string) {
 			defer imgWG.Done()
-			tm.processImage(url, idx, mangaId, chapterInfo.Name, reqCtx)
-		}(url, i)
+			tm.processImage(url, idx, mangaID, chapterNum, reqCtx)
+		}(i, url)
 	}
 
 	imgWG.Wait()
@@ -225,23 +219,14 @@ func (tm *TaskManager) downloadImageWithRetry(url string, ctx context.Context) (
 			continue
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		resp, err := tm.query.DownloadImage(ctx, url, imgClient)
 		if err != nil {
 			imgClient.MarkAsBad(tm.proxyManager)
-			continue
-		}
-
-		resp, err := imgClient.Client.Do(req)
-		if err != nil {
-			imgClient.MarkAsBad(tm.proxyManager)
-			if resp != nil && resp.Body != nil {
-				resp.Body.Close()
-			}
 			continue
 		}
 
 		imgBytes, ext, contentType, err := query.FilterImg(resp, url)
-		if err != nil || len(imgBytes) < 0 {
+		if err != nil || len(imgBytes) <= 0 {
 			imgClient.MarkAsBad(tm.proxyManager)
 			continue
 		}

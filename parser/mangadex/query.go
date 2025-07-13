@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"mangadex/parser/proxy"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 type Query struct{}
@@ -17,6 +19,7 @@ func NewQueryManager() *Query {
 }
 
 func (qm *Query) GetMangaList(ctx context.Context, limit, offset int, c *proxy.ProxyClient) (*MangaListReq, error) {
+	slog.Info("GEtManagList", "off", offset)
 	u, _ := url.Parse("https://api.mangadex.org/manga")
 	params := url.Values{
 		"limit":                         []string{strconv.Itoa(limit)},
@@ -30,7 +33,10 @@ func (qm *Query) GetMangaList(ctx context.Context, limit, offset int, c *proxy.P
 	}
 	u.RawQuery = params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := c.CreateMangaRequest(reqCtx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -45,8 +51,10 @@ func (qm *Query) GetMangaList(ctx context.Context, limit, offset int, c *proxy.P
 	if err != nil {
 		return nil, err
 	}
+	slog.Info("A::l", result)
+	return nil, nil
 
-	return &result, nil
+	// return &result, nil
 }
 
 type ChapterList struct {
@@ -57,7 +65,10 @@ type ChapterList struct {
 func (qm *Query) GetChapterListById(ctx context.Context, mangaID string, c *proxy.ProxyClient) ([]ChapterList, error) {
 	urlStr := fmt.Sprintf("https://api.mangadex.org/manga/%s/aggregate?translatedLanguage[]=en", mangaID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+
+	req, err := c.CreateMangaRequest(reqCtx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +107,10 @@ type ChapterImgsData struct {
 func (qm *Query) GetChapterimgsById(ctx context.Context, chapterID string, c *proxy.ProxyClient) (*ChapterImgsData, error) {
 	urlStr := fmt.Sprintf("https://api.mangadex.org/at-home/server/%s?forcePort443=false", chapterID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+
+	req, err := c.CreateMangaRequest(reqCtx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -129,4 +143,26 @@ func (qm *Query) GetChapterimgsById(ctx context.Context, chapterID string, c *pr
 	return &ChapterImgsData{chapterID, result}, nil
 }
 
+func (qm *Query) DownloadImage(ctx context.Context, imageURL string, c *proxy.ProxyClient) (*http.Response, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	req, err := c.CreateMangaRequest(reqCtx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create image request: %v", err)
+	}
+
+	req.Header.Set("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
+	req.Header.Set("Sec-Fetch-Dest", "image")
+	req.Header.Set("Referer", "https://mangadx.org/")
+
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		c.MarkAsBad(nil)
+		return nil, fmt.Errorf("image download failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	return resp, err
+}
 func (qm *Query) GetMangaImgs() {}

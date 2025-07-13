@@ -72,7 +72,6 @@ func CreateProxyClient(addr string) *ProxyClient {
 			proxyType = TypeHTTP
 		} else {
 			if strings.HasPrefix(addr, "socks4://") {
-				log.Printf("SOCKS4 proxy %s skipped - not supported", addr)
 				return nil
 			}
 			proxyType = TypeSOCKS5
@@ -82,9 +81,7 @@ func CreateProxyClient(addr string) *ProxyClient {
 	}
 
 	if _, _, err := net.SplitHostPort(cleanAddr); err != nil {
-		log.Printf("Invalid proxy address format %s: %v", addr, err)
 		return nil
-
 	}
 
 	var transport *http.Transport
@@ -92,11 +89,10 @@ func CreateProxyClient(addr string) *ProxyClient {
 	switch proxyType {
 	case TypeSOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   8 * time.Second,
+			KeepAlive: 0,
 		})
 		if err != nil {
-			log.Printf("Failed to create SOCKS5 dialer for %s: %v", cleanAddr, err)
 			return nil
 		}
 		transport = &http.Transport{
@@ -108,7 +104,6 @@ func CreateProxyClient(addr string) *ProxyClient {
 	case TypeHTTP:
 		proxyUrl, err := url.Parse("http://" + cleanAddr)
 		if err != nil {
-			log.Printf("Failed to parse HTTP proxy address %s: %v", cleanAddr, err)
 			return nil
 		}
 		transport = &http.Transport{
@@ -120,15 +115,18 @@ func CreateProxyClient(addr string) *ProxyClient {
 		return nil
 	}
 
-	transport.MaxIdleConns = 10
-	transport.IdleConnTimeout = 30 * time.Second
-	transport.TLSHandshakeTimeout = 10 * time.Second
-	transport.ExpectContinueTimeout = 1 * time.Second
-	transport.ResponseHeaderTimeout = 15 * time.Second
+	transport.MaxIdleConns = 1
+	transport.MaxIdleConnsPerHost = 1
+	transport.IdleConnTimeout = 10 * time.Second
+	transport.TLSHandshakeTimeout = 15 * time.Second
+	transport.ExpectContinueTimeout = 2 * time.Second
+	transport.ResponseHeaderTimeout = 20 * time.Second
+	transport.DisableKeepAlives = true
+	transport.DisableCompression = false
 
 	return &ProxyClient{
 		Addr:   originalAddr,
-		Client: &http.Client{Transport: transport, Timeout: 20 * time.Second},
+		Client: &http.Client{Transport: transport, Timeout: 30 * time.Second},
 		Type:   proxyType,
 		Busy:   false,
 		Status: false,
@@ -162,6 +160,28 @@ func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
 	return client, nil
 }
 
+func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	// req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Connection", "close")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+
+	return req, nil
+}
+
 // var testUrls = []string{
 // 	"https://mangapark.io/docs",
 // 	"https://mangapark.io/signin",
@@ -169,18 +189,17 @@ func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
 // 	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
 // }
 
+//	var testUrls = []string{
+//		// "http://neverssl.com",
+//		"https://postman-echo.com/get",
+//		"https://ifconfig.me",
+//		"https://icanhazip.com",
+//	}
 var testUrls = []string{
 	"https://mangadex.org/about",
 	"https://mangadex.org/contact",
 	"https://mangadex.org/announcements",
 }
-
-// var testUrls = []string{
-// 	// "http://neverssl.com",
-// 	"https://postman-echo.com/get",
-// 	"https://ifconfig.me",
-// 	"https://icanhazip.com",
-// }
 
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	randIndex := rand.Intn(len(testUrls))
@@ -189,7 +208,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, "GET", testURL, nil)
+	req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
