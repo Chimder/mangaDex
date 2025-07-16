@@ -42,7 +42,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 80)
+	workerPool := make(chan struct{}, 96)
 
 	for {
 		select {
@@ -104,7 +104,7 @@ func (pm *ProxyManager) GetRandomProxyHttpClient() (*http.Client, error) {
 	defer pm.mu.RUnlock()
 
 	if len(pm.AllAddresses) == 0 {
-		return nil, fmt.Errorf("Len allAddresses is 0")
+		return nil, fmt.Errorf("len allAddresses is 0")
 	}
 
 	randIndex := rand.Intn(len(pm.AllAddresses))
@@ -121,28 +121,6 @@ func (pm *ProxyManager) GetRandomProxyHttpClient() (*http.Client, error) {
 	}
 	return httpClient, nil
 }
-
-// func (pm *ProxyManager) AutoCleanup(ctx context.Context, tick time.Duration) {
-// 	ticker := time.NewTicker(tick)
-// 	defer ticker.Stop()
-
-// 	for {
-// 		select {
-// 		case <-ticker.C:
-// 			pm.mu.Lock()
-// 			for addr, client := range pm.ProxyClients {
-// 				client.mu.Lock()
-// 				if !client.Status {
-// 					delete(pm.ProxyClients, addr)
-// 				}
-// 				client.mu.Unlock()
-// 			}
-// 			pm.mu.Unlock()
-// 		case <-ctx.Done():
-// 			return
-// 		}
-// 	}
-// }
 
 func (pm *ProxyManager) GetProxyCount() int {
 	pm.mu.RLock()

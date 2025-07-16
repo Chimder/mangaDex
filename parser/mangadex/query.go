@@ -51,10 +51,8 @@ func (qm *Query) GetMangaList(ctx context.Context, limit, offset int, c *proxy.P
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("A::l", result)
-	return nil, nil
 
-	// return &result, nil
+	return &result, nil
 }
 
 type ChapterList struct {
@@ -96,7 +94,10 @@ func (qm *Query) GetChapterListById(ctx context.Context, mangaID string, c *prox
 		}
 	}
 
-	return allChapters[0:10], nil
+	if len(allChapters) > 1 {
+		return allChapters[0:1], nil
+	}
+	return allChapters, nil
 }
 
 type ChapterImgsData struct {
@@ -104,7 +105,7 @@ type ChapterImgsData struct {
 	imgLinks  []string
 }
 
-func (qm *Query) GetChapterimgsById(ctx context.Context, chapterID string, c *proxy.ProxyClient) (*ChapterImgsData, error) {
+func (qm *Query) GetChapterImgsById(ctx context.Context, chapterID string, c *proxy.ProxyClient) (*ChapterImgsData, error) {
 	urlStr := fmt.Sprintf("https://api.mangadex.org/at-home/server/%s?forcePort443=false", chapterID)
 
 	reqCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -144,24 +145,19 @@ func (qm *Query) GetChapterimgsById(ctx context.Context, chapterID string, c *pr
 }
 
 func (qm *Query) DownloadImage(ctx context.Context, imageURL string, c *proxy.ProxyClient) (*http.Response, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	req, err := c.CreateMangaRequest(reqCtx, http.MethodGet, imageURL, nil)
+	req, err := http.NewRequestWithContext(reqCtx, "GET", imageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create image request: %v", err)
 	}
-
-	req.Header.Set("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
-	req.Header.Set("Sec-Fetch-Dest", "image")
-	req.Header.Set("Referer", "https://mangadx.org/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		c.MarkAsBad(nil)
 		return nil, fmt.Errorf("image download failed: %v", err)
 	}
-	defer resp.Body.Close()
 
 	return resp, err
 }

@@ -63,13 +63,13 @@ func (r *mangaRepository) GetMangaById(ctx context.Context, id string) (*MangaDB
 func (q *mangaRepository) InsertManga(ctx context.Context, arg *MangaData) (string, error) {
 	query := `
     INSERT INTO manga (
-        type, title_en, alt_titles, description_en,
+        title_en, alt_titles, description_en,
         tags, original_language, last_chapter,
         status, publication_demographic, year,
         content_rating, state,
         is_locked, links_mal
     ) VALUES (
-        @type, @title_en, @alt_titles, @description_en,
+        @title_en, @alt_titles, @description_en,
         @tags, @original_language, @last_chapter,
         @status, @publication_demographic, @year,
         @content_rating, @state,
@@ -80,23 +80,25 @@ func (q *mangaRepository) InsertManga(ctx context.Context, arg *MangaData) (stri
 
 	var altTitles []string
 	for _, v := range arg.Attributes.AltTitles {
-		if v.En != "" {
-			altTitles = append(altTitles, v.En)
-		} else {
-			altTitles = append(altTitles, v.Ja)
+		if val, ok := v["en"]; ok && val != "" {
+			altTitles = append(altTitles, val)
+		} else if val, ok := v["ja"]; ok && val != "" {
+			altTitles = append(altTitles, val)
 		}
 	}
 
 	var tags []string
 	for _, v := range arg.Attributes.Tags {
-		tags = append(tags, v.Attributes.Name.En)
+		if val, ok := v.Attributes.Name["en"]; ok && val != "" {
+			tags = append(tags, val)
+		}
 	}
 
 	var id string
 	err := q.db.QueryRow(ctx, query, pgx.NamedArgs{
-		"title_en":                arg.Attributes.Title.En,
+		"title_en":                arg.Attributes.Title["en"],
 		"alt_titles":              altTitles,
-		"description_en":          arg.Attributes.Description.En,
+		"description_en":          arg.Attributes.Description["en"],
 		"tags":                    tags,
 		"original_language":       arg.Attributes.OriginalLanguage,
 		"last_chapter":            arg.Attributes.LastChapter,
@@ -106,7 +108,7 @@ func (q *mangaRepository) InsertManga(ctx context.Context, arg *MangaData) (stri
 		"content_rating":          arg.Attributes.ContentRating,
 		"state":                   arg.Attributes.State,
 		"is_locked":               arg.Attributes.IsLocked,
-		"links_mal":               arg.Attributes.Links,
+		"links_mal":               arg.Attributes.Links["mal"],
 	}).Scan(&id)
 	if err != nil {
 		return id, err

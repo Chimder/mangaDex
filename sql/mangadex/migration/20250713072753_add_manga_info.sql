@@ -5,7 +5,6 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS manga (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    type TEXT NOT NULL,
     title_en TEXT NOT NULL,
     description_en TEXT,
     latest_uploaded_chapter INTEGER,

@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"log/slog"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -55,7 +54,6 @@ func (pc *ProxyClient) MarkAsBad(pm *ProxyManager) {
 	if pc == nil {
 		return
 	}
-
 	pm.RemoveProxyClient(pc.Addr)
 }
 
@@ -89,7 +87,7 @@ func CreateProxyClient(addr string) *ProxyClient {
 	switch proxyType {
 	case TypeSOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
-			Timeout:   8 * time.Second,
+			Timeout:   10 * time.Second,
 			KeepAlive: 0,
 		})
 		if err != nil {
@@ -117,16 +115,16 @@ func CreateProxyClient(addr string) *ProxyClient {
 
 	transport.MaxIdleConns = 1
 	transport.MaxIdleConnsPerHost = 1
-	transport.IdleConnTimeout = 10 * time.Second
+	transport.IdleConnTimeout = 25 * time.Second
 	transport.TLSHandshakeTimeout = 15 * time.Second
 	transport.ExpectContinueTimeout = 2 * time.Second
-	transport.ResponseHeaderTimeout = 20 * time.Second
+	transport.ResponseHeaderTimeout = 60 * time.Second
 	transport.DisableKeepAlives = true
 	transport.DisableCompression = false
 
 	return &ProxyClient{
 		Addr:   originalAddr,
-		Client: &http.Client{Transport: transport, Timeout: 30 * time.Second},
+		Client: &http.Client{Transport: transport, Timeout: 90 * time.Second},
 		Type:   proxyType,
 		Busy:   false,
 		Status: false,
@@ -141,20 +139,22 @@ func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
 	}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyURL(proxyUrl),
-		MaxIdleConns:          10,
-		IdleConnTimeout:       15 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ResponseHeaderTimeout: 3 * time.Second,
-		TLSHandshakeTimeout:   2 * time.Second,
+		MaxIdleConns:          1,
+		MaxConnsPerHost:       1,
+		IdleConnTimeout:       25 * time.Second,
+		ExpectContinueTimeout: 2 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		TLSHandshakeTimeout:   4 * time.Second,
+		DisableKeepAlives:     true,
 		DialContext: (&net.Dialer{
-			Timeout:   5 * time.Second,
-			KeepAlive: 10 * time.Second,
+			Timeout:   15 * time.Second,
+			KeepAlive: 25 * time.Second,
 		}).DialContext,
 	}
 
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Second,
+		Timeout:   40 * time.Second,
 	}
 
 	return client, nil
@@ -169,15 +169,15 @@ func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url strin
 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	// req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	req.Header.Set("Connection", "close")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Upgrade-Insecure-Requests", "1")
-	req.Header.Set("Sec-Fetch-Dest", "document")
-	req.Header.Set("Sec-Fetch-Mode", "navigate")
-	req.Header.Set("Sec-Fetch-Site", "none")
-	req.Header.Set("Sec-Fetch-User", "?1")
+	// req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	// req.Header.Set("Cache-Control", "no-cache")
+	// req.Header.Set("Pragma", "no-cache")
+	// req.Header.Set("Upgrade-Insecure-Requests", "1")
+	// req.Header.Set("Sec-Fetch-Dest", "document")
+	// req.Header.Set("Sec-Fetch-Mode", "navigate")
+	// req.Header.Set("Sec-Fetch-Site", "none")
+	// req.Header.Set("Sec-Fetch-User", "?1")
 
 	return req, nil
 }
@@ -202,13 +202,14 @@ var testUrls = []string{
 }
 
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
-	randIndex := rand.Intn(len(testUrls))
-	testURL := testUrls[randIndex]
+	// randIndex := rand.Intn(len(testUrls))
+	// testURL := testUrls[randIndex]
 
 	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 
-	req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
+	req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://cmdxd98sb0x3yprd.mangadex.network", nil)
+	// req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
@@ -247,25 +248,10 @@ func GetTxtProxy() ([]string, error) {
 
 	sources := []source{
 		{"https://www.proxy-list.download/api/v1/get?type=http&anon=elite&country=US", TypeHTTP},
-		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
-		{"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt", TypeHTTP},
-		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
-		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/almroot/proxylist/master/list.txt", TypeHTTP},
-		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
-		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
+		{"https://api.proxyscrape.com/v2/?request=getproxies&protocol=http", TypeHTTP},
 		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", TypeHTTP},
@@ -278,12 +264,27 @@ func GetTxtProxy() ([]string, error) {
 		{"https://api.openproxylist.xyz/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt", TypeHTTP},
-		{"https://api.openproxylist.xyz/socks5.txt", TypeSOCKS5},
 		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/http.txt", TypeHTTP},
+		// {"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		// {"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
+		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		// {"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
+		// {"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
+		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		// {"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
+		// {"https://api.openproxylist.xyz/socks5.txt", TypeSOCKS5},
 	}
 
 	client := &http.Client{

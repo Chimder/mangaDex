@@ -52,7 +52,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 
 func (tm *TaskManager) ProcessPages() {
 	slog.Info("Starting task manager")
-	sem := make(chan struct{}, 3)
+	sem := make(chan struct{}, 1)
 	limit := 34
 	offset := 0
 
@@ -93,11 +93,11 @@ func (tm *TaskManager) ProcessPages() {
 						<-sem
 						wg.Done()
 					}()
-					mangaId, _ := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, m.Attributes.Title.En)
+					mangaId, _ := tm.mangaRepo.ExistsMangaByTitle(tm.ctx, m.Attributes.Title["en"])
 					if mangaId == "" {
 						tm.handleMangaInfo(&manga)
 					} else {
-						slog.Warn("Skipping existing manga", "title", m.Attributes.Title.En)
+						slog.Warn("Skipping existing manga", "title", m.Attributes.Title["en"])
 					}
 				}(&manga)
 			}
@@ -123,20 +123,20 @@ func (tm *TaskManager) handleMangaInfo(manga *MangaData) {
 	mangaId, errDb = tm.mangaRepo.InsertManga(tm.ctx, manga)
 	if errDb != nil || mangaId == "" {
 		// client.MarkAsBad(tm.proxyManager)
-		slog.Info("Failed insert manga info", "err:", errDb, "title", manga.Attributes.Title.En)
+		slog.Info("Failed insert manga info", "err:", errDb, "title", manga.Attributes.Title["en"])
 		return
 	}
 
 	for i := range maxRetries {
 		client = tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if client == nil {
-			slog.Error("No available proxy", "manga", manga.Attributes.Title.En, "retrie", i)
+			slog.Error("No available proxy", "manga", manga.Attributes.Title["en"], "retrie", i)
 			continue
 		}
 		chapterData, errParse = tm.query.GetChapterListById(tm.ctx, manga.ID, client)
 		if errParse != nil {
 			client.MarkAsBad(tm.proxyManager)
-			slog.Error("Err to get manga info", "manga", manga.Attributes.Title.En, "error", errParse, "retries", i)
+			slog.Error("Err to get manga info", "manga", manga.Attributes.Title["en"], "error", errParse, "retries", i)
 			continue
 		}
 		break
@@ -156,7 +156,7 @@ func (tm *TaskManager) handleMangaInfo(manga *MangaData) {
 
 	chapWg.Wait()
 	client.MarkAsNotBusy()
-	slog.Info("Get manga info", "title", manga.Attributes.Title.En, "chapters", len(chapterData))
+	slog.Info("Get manga info", "title", manga.Attributes.Title["en"], "chapters", len(chapterData))
 }
 
 func (tm *TaskManager) handleMangaChapter(mangaID string, chapterID string, chapterNum string) {
@@ -172,7 +172,7 @@ func (tm *TaskManager) handleMangaChapter(mangaID string, chapterID string, chap
 		}
 
 		// parser := NewParserManager(client.Addr)
-		chapterImgs, err = tm.query.GetChapterimgsById(tm.ctx, chapterID, client)
+		chapterImgs, err = tm.query.GetChapterImgsById(tm.ctx, chapterID, client)
 		if err != nil {
 			client.MarkAsBad(tm.proxyManager)
 			slog.Error("Err to get chap imgs", "id", chapterID, "error", err, "retry", i)
@@ -183,67 +183,76 @@ func (tm *TaskManager) handleMangaChapter(mangaID string, chapterID string, chap
 		break
 	}
 
-	reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
-	defer cancel()
-
 	var imgWG sync.WaitGroup
 	imgWG.Add(len(chapterImgs.imgLinks))
 
 	for i, url := range chapterImgs.imgLinks {
 		go func(idx int, url string) {
 			defer imgWG.Done()
-			tm.processImage(url, idx, mangaID, chapterNum, reqCtx)
+			tm.processImage(url, idx, mangaID, chapterNum)
 		}(i, url)
 	}
 
 	imgWG.Wait()
 }
-func (tm *TaskManager) processImage(url string, idx int, mangaId, chapterName string, ctx context.Context) {
-	imgBytes, ext, contentType, err := tm.downloadImageWithRetry(url, ctx)
-	if err != nil {
-		slog.Error("download failed", "url", url, "err", err)
-		return
-	}
-
-	err = tm.uploadToS3WithRetry(ctx, imgBytes, mangaId, chapterName, idx, ext, contentType)
-	if err != nil {
-		slog.Error("upload failed", "url", url, "err", err)
-	}
-}
-
-func (tm *TaskManager) downloadImageWithRetry(url string, ctx context.Context) ([]byte, string, string, error) {
-	// var imgClient *proxy.ProxyClient
+func (tm *TaskManager) processImage(url string, idx int, mangaId, chapterName string) {
+	var (
+		imgBytes    []byte
+		ext         string
+		contentType string
+		errFilter   error
+	)
 	for range maxRetries {
 		imgClient := tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if imgClient == nil {
 			continue
 		}
 
-		resp, err := tm.query.DownloadImage(ctx, url, imgClient)
+		resp, err := tm.query.DownloadImage(tm.ctx, url, imgClient)
 		if err != nil {
+			slog.Error("dowload img", "err", err)
 			imgClient.MarkAsBad(tm.proxyManager)
 			continue
 		}
 
-		imgBytes, ext, contentType, err := query.FilterImg(resp, url)
-		if err != nil || len(imgBytes) <= 0 {
+		imgBytes, ext, contentType, errFilter = query.FilterImg(resp, url)
+		if errFilter != nil {
+			slog.Error("filter Img", "err", errFilter)
 			imgClient.MarkAsBad(tm.proxyManager)
 			continue
 		}
-
+		if len(imgBytes) <= 0 {
+			slog.Error("filter bytes", "err", errFilter)
+			imgClient.MarkAsBad(tm.proxyManager)
+			continue
+		}
+		slog.Info("Filter img Ok", ":", url)
 		imgClient.MarkAsNotBusy()
-		return imgBytes, ext, contentType, nil
+		break
+	}
+	if len(imgBytes) <= 0 {
+		slog.Error("final filter bytes max try")
+		return
 	}
 
-	return nil, "", "", fmt.Errorf("failed dowload %d retries", maxRetries)
+	err := tm.uploadToS3WithRetry(imgBytes, mangaId, chapterName, idx, ext, contentType)
+	if err != nil {
+		slog.Error("upload failed", "url", url, "err", err)
+		return
+	}
 }
 
-func (tm *TaskManager) uploadToS3WithRetry(ctx context.Context, imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
+func (tm *TaskManager) uploadToS3WithRetry(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
+	slog.Info("Start S3", "chaN", chapterName)
+
+	putCtx, cancel := context.WithTimeout(tm.ctx, 60*time.Second)
+	defer cancel()
+
 	bucketName := "mangapark"
 	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx+1, ext)
 
 	for i := range maxRetries {
-		_, err := tm.bucket.PutObject(ctx, bucketName, objectName,
+		_, err := tm.bucket.PutObject(putCtx, bucketName, objectName,
 			bytes.NewReader(imgBytes), int64(len(imgBytes)),
 			minio.PutObjectOptions{ContentType: contentType},
 		)
