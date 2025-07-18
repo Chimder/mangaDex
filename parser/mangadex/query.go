@@ -145,7 +145,7 @@ func (qm *Query) GetChapterImgsById(ctx context.Context, chapterID string, c *pr
 }
 
 func (qm *Query) DownloadImage(ctx context.Context, imageURL string, c *proxy.ProxyClient) (*http.Response, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", imageURL, nil)
@@ -153,6 +153,17 @@ func (qm *Query) DownloadImage(ctx context.Context, imageURL string, c *proxy.Pr
 		return nil, fmt.Errorf("failed to create image request: %v", err)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Referer", "https://mangadex.org/")
+	req.Header.Set("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Connection", "close")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
 
 	resp, err := c.Client.Do(req)
 	if err != nil {

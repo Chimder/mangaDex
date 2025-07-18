@@ -245,7 +245,7 @@ func (tm *TaskManager) processImage(url string, idx int, mangaId, chapterName st
 func (tm *TaskManager) uploadToS3WithRetry(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
 	slog.Info("Start S3", "chaN", chapterName)
 
-	putCtx, cancel := context.WithTimeout(tm.ctx, 60*time.Second)
+	putCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	bucketName := "mangapark"

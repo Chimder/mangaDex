@@ -1,7 +1,7 @@
 include .env
 export $(shell sed 's/=.*//' .env)
 
-MGDIR = sql/mangadex/migration
+MGDIR = sql/mangapark/migration
 up:
 	goose -dir $(MGDIR) postgres ${DB_URL} up
 

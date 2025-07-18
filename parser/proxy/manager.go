@@ -2,9 +2,6 @@ package proxy
 
 import (
 	"context"
-	"fmt"
-	"math/rand"
-	"net/http"
 	"sync"
 	"time"
 )
@@ -42,7 +39,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 96)
+	workerPool := make(chan struct{}, 80)
 
 	for {
 		select {
@@ -97,29 +94,6 @@ func (pm *ProxyManager) GetAvailableProxyClient(ctx context.Context) *ProxyClien
 			}
 		}
 	}
-}
-
-func (pm *ProxyManager) GetRandomProxyHttpClient() (*http.Client, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	if len(pm.AllAddresses) == 0 {
-		return nil, fmt.Errorf("len allAddresses is 0")
-	}
-
-	randIndex := rand.Intn(len(pm.AllAddresses))
-	addr := pm.AllAddresses[randIndex]
-	// pm.NextIndexAddres++
-
-	client := CreateProxyClient(addr)
-	if client == nil {
-		return nil, fmt.Errorf("err random proxy client is nil")
-	}
-	httpClient, err := client.GetProxyHttpClient()
-	if err != nil {
-		return nil, fmt.Errorf("err create random http proxy client: %w ", err)
-	}
-	return httpClient, nil
 }
 
 func (pm *ProxyManager) GetProxyCount() int {

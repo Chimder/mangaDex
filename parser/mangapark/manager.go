@@ -33,6 +33,7 @@ type TaskManager struct {
 	maxWorkers   int
 	currentPage  int
 	ctx          context.Context
+	imgChanTask  chan ImgInfoToChan
 	cancel       context.CancelFunc
 	bucket       *minio.Client
 }
@@ -42,6 +43,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 	return &TaskManager{
 		proxyManager: proxyMng,
 		bucket:       bucket,
+		imgChanTask:  make(chan ImgInfoToChan, 100),
 		mangaRepo:    NewMangaRepository(db),
 		maxWorkers:   32,
 		currentPage:  1,
@@ -50,9 +52,93 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 	}
 }
 
+func (tm *TaskManager) ProcessImg() {
+	// go tm.processImgsToFile()
+	slog.Debug("Start IMG Process")
+
+	items, err := tm.mangaRepo.GetImgTasks(tm.ctx)
+	if err != nil {
+		slog.Error("get all img_task", "err", err)
+		return
+	}
+
+	var wg sync.WaitGroup
+
+	sem := make(chan struct{}, 100)
+	wg.Add(len(items))
+
+	for i, img := range items {
+		go func(i int, img ImgInfoToChan) {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+			sem <- struct{}{}
+			var (
+				imgBytes    []byte
+				ext         string
+				contentType string
+				errImg      error
+			)
+			delay := time.Second
+
+			for range 10 {
+				time.Sleep(delay)
+
+				reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
+				defer cancel()
+
+				imgClient := tm.proxyManager.GetAvailableProxyClient(tm.ctx)
+				if imgClient == nil {
+					delay *= 2
+					continue
+				}
+
+				req, err := http.NewRequestWithContext(reqCtx, "GET", img.Url, nil)
+				if err != nil {
+					slog.Error("img request", "err", err)
+					imgClient.MarkAsBad(tm.proxyManager)
+					delay *= 2
+					continue
+				}
+
+				resp, err := imgClient.Client.Do(req)
+				if err != nil {
+					imgClient.MarkAsBad(tm.proxyManager)
+					if resp != nil && resp.Body != nil {
+						resp.Body.Close()
+					}
+					delay *= 2
+					continue
+				}
+
+				imgBytes, ext, contentType, errImg = query.FilterImg(resp, img.Url)
+				if errImg != nil || len(imgBytes) <= 0 {
+					slog.Error("img filter", "err", errImg, "", ext, "", contentType)
+					imgClient.MarkAsBad(tm.proxyManager)
+					delay *= 2
+					continue
+				}
+				imgClient.MarkAsNotBusy()
+				break
+			}
+			if errImg != nil || len(imgBytes) <= 0 {
+				slog.Error("img filter", "err", errImg)
+				return
+			}
+			err := tm.uploadToS3WithRetry(imgBytes, img.MangaId, img.ChapterName, img.Idx, ext, contentType)
+			if err != nil {
+				slog.Error("retry uploadToS3", "err:", err)
+				return
+			}
+		}(i, img)
+	}
+	wg.Wait()
+}
+
 func (tm *TaskManager) ProcessPages() {
 	slog.Info("Starting task manager")
-	sem := make(chan struct{}, 3)
+	sem := make(chan struct{}, 5)
 
 	for {
 		select {
@@ -188,44 +274,39 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 		break
 	}
 
-	reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
-	defer cancel()
-
 	var imgWG sync.WaitGroup
 	imgWG.Add(len(chapterInfo.Images))
 
 	for i, url := range chapterInfo.Images {
 		go func(url string, idx int) {
 			defer imgWG.Done()
-			tm.processImage(url, idx, mangaId, chapterInfo.Name, reqCtx)
+			tm.getImage(url, idx, mangaId, chapterInfo.Name)
 		}(url, i)
 	}
 
 	imgWG.Wait()
 }
-func (tm *TaskManager) processImage(url string, idx int, mangaId, chapterName string, ctx context.Context) {
-	imgBytes, ext, contentType, err := tm.downloadImageWithRetry(url, ctx)
-	if err != nil {
-		slog.Error("download failed", "url", url, "err", err)
-		return
-	}
 
-	err = tm.uploadToS3WithRetry(ctx, imgBytes, mangaId, chapterName, idx, ext, contentType)
-	if err != nil {
-		slog.Error("upload failed", "url", url, "err", err)
-	}
-}
+func (tm *TaskManager) getImage(url string, idx int, mangaId, chapterName string) {
+	var (
+		imgBytes    []byte
+		ext         string
+		contentType string
+		errImg      error
+	)
 
-func (tm *TaskManager) downloadImageWithRetry(url string, ctx context.Context) ([]byte, string, string, error) {
-	// var imgClient *proxy.ProxyClient
-	for range maxRetries {
+	for range 2 {
+		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
+		defer cancel()
+
 		imgClient := tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if imgClient == nil {
 			continue
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 		if err != nil {
+			slog.Error("img request", "err", err)
 			imgClient.MarkAsBad(tm.proxyManager)
 			continue
 		}
@@ -239,37 +320,76 @@ func (tm *TaskManager) downloadImageWithRetry(url string, ctx context.Context) (
 			continue
 		}
 
-		imgBytes, ext, contentType, err := query.FilterImg(resp, url)
-		if err != nil || len(imgBytes) < 0 {
+		imgBytes, ext, contentType, errImg = query.FilterImg(resp, url)
+		if errImg != nil || len(imgBytes) <= 0 {
+			slog.Error("img filter", "err", errImg)
 			imgClient.MarkAsBad(tm.proxyManager)
 			continue
 		}
 
 		imgClient.MarkAsNotBusy()
-		return imgBytes, ext, contentType, nil
+		break
+	}
+	if errImg != nil || len(imgBytes) <= 0 {
+		tm.imgChanTask <- ImgInfoToChan{url, idx, mangaId, chapterName}
+		slog.Error("img download max retry", "err", errImg)
+		return
 	}
 
-	return nil, "", "", fmt.Errorf("failed dowload %d retries", maxRetries)
+	err := tm.uploadToS3WithRetry(imgBytes, mangaId, chapterName, idx, ext, contentType)
+	if err != nil {
+		slog.Error("upload failed", "url", url, "err", err)
+	}
 }
 
-func (tm *TaskManager) uploadToS3WithRetry(ctx context.Context, imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
+func (tm *TaskManager) ProcessImgsToFile() error {
+	slog.Debug("Start IMG To File")
+	for {
+		select {
+		case <-tm.ctx.Done():
+			return fmt.Errorf("ctx done list img")
+		case img := <-tm.imgChanTask:
+			slog.Info("T", ":", img)
+
+			created, err := tm.mangaRepo.CreateImgTask(tm.ctx, img)
+			if !created {
+				slog.Error("Failed to write to file", "err", err)
+				continue
+			}
+		}
+	}
+}
+
+func (tm *TaskManager) uploadToS3WithRetry(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
 	bucketName := "mangapark"
 	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx+1, ext)
+	s3Retry := 4
 
-	for i := range maxRetries {
-		_, err := tm.bucket.PutObject(ctx, bucketName, objectName,
-			bytes.NewReader(imgBytes), int64(len(imgBytes)),
+	var errS3 error
+	for i := range s3Retry {
+		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
+
+		_, errS3 = tm.bucket.PutObject(
+			reqCtx,
+			bucketName,
+			objectName,
+			bytes.NewReader(imgBytes),
+			int64(len(imgBytes)),
 			minio.PutObjectOptions{ContentType: contentType},
 		)
-		if err == nil {
-			return nil
+		cancel()
+
+		if errS3 != nil {
+			slog.Error("upload s3", "err", errS3, "try", i+1)
+			time.Sleep(time.Second * time.Duration(i+1))
+			continue
 		}
 
-		slog.Warn("upload retry", "attempt", i+1, "err", err)
-		time.Sleep(time.Second * time.Duration(i+1))
+		slog.Warn("IMG S3 UP", "name", chapterName)
+		return nil
 	}
 
-	return fmt.Errorf("S3 upload failed after %d retries", maxRetries)
+	return fmt.Errorf("S3 upload failed after %d retries", s3Retry)
 }
 
 // func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {

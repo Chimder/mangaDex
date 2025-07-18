@@ -30,6 +30,9 @@ type MangaRepository interface {
 	InsertManga(ctx context.Context, arg MangaDB) (string, error)
 	GetMangaChaptersById(ctx context.Context, id string) (MangaChaptersInfo, error)
 	ExistsMangaByTitle(ctx context.Context, title string) (string, error)
+	CreateImgTask(ctx context.Context, img ImgInfoToChan) (bool, error)
+	DeleteImgTaskByURL(ctx context.Context, url string) (bool, error)
+	GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error)
 }
 
 type mangaRepository struct {
@@ -68,7 +71,7 @@ func (r *mangaRepository) GetMangaChaptersById(ctx context.Context, id string) (
 	query := `SELECT (last_chapter, chapters_amount, manga_id) FROM manga WHERE id = $1`
 	rows, err := r.db.Query(ctx, query, id)
 	if err != nil {
-		return MangaChaptersInfo{}, fmt.Errorf("err fetch user stats  %w", err)
+		return MangaChaptersInfo{}, fmt.Errorf("err fetch manga %w", err)
 	}
 	defer rows.Close()
 
@@ -103,4 +106,46 @@ func (q *mangaRepository) InsertManga(ctx context.Context, arg MangaDB) (string,
 	}
 
 	return id, err
+}
+
+func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error) {
+	query := `SELECT * FROM img_task`
+	var imgs []ImgInfoToChan
+	rows, err := r.db.Query(ctx, query, imgs)
+	if err != nil {
+		return nil, fmt.Errorf("err fetch img_task  %w", err)
+	}
+	defer rows.Close()
+
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ImgInfoToChan])
+}
+
+func (r *mangaRepository) CreateImgTask(ctx context.Context, img ImgInfoToChan) (bool, error) {
+	query := `INSERT INTO img_task (url, idx, manga_id, chapter_name)
+	          VALUES (@url, @idx, @manga_id, @chapter_name)`
+
+	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
+		"url":          img.Url,
+		"idx":          img.Idx,
+		"manga_id":     img.MangaId,
+		"chapter_name": img.ChapterName,
+	})
+	if err != nil {
+		return false, fmt.Errorf("err create img_task: %w", err)
+	}
+
+	return res.RowsAffected() > 0, nil
+}
+
+func (r *mangaRepository) DeleteImgTaskByURL(ctx context.Context, url string) (bool, error) {
+	query := `DELETE FROM img_task WHERE url = $1`
+
+	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
+		"url": url,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return res.RowsAffected() > 0, nil
 }

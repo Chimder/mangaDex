@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -87,7 +88,7 @@ func CreateProxyClient(addr string) *ProxyClient {
 	switch proxyType {
 	case TypeSOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
-			Timeout:   10 * time.Second,
+			Timeout:   100 * time.Second,
 			KeepAlive: 0,
 		})
 		if err != nil {
@@ -113,51 +114,22 @@ func CreateProxyClient(addr string) *ProxyClient {
 		return nil
 	}
 
-	transport.MaxIdleConns = 1
-	transport.MaxIdleConnsPerHost = 1
-	transport.IdleConnTimeout = 25 * time.Second
-	transport.TLSHandshakeTimeout = 15 * time.Second
-	transport.ExpectContinueTimeout = 2 * time.Second
+	transport.MaxIdleConns = 10
+	transport.MaxIdleConnsPerHost = 5
+	transport.IdleConnTimeout = 45 * time.Second
+	transport.TLSHandshakeTimeout = 20 * time.Second
+	transport.ExpectContinueTimeout = 3 * time.Second
 	transport.ResponseHeaderTimeout = 60 * time.Second
 	transport.DisableKeepAlives = true
 	transport.DisableCompression = false
 
 	return &ProxyClient{
 		Addr:   originalAddr,
-		Client: &http.Client{Transport: transport, Timeout: 90 * time.Second},
+		Client: &http.Client{Transport: transport, Timeout: 100 * time.Second},
 		Type:   proxyType,
 		Busy:   false,
 		Status: false,
 	}
-}
-
-func (pc *ProxyClient) GetProxyHttpClient() (*http.Client, error) {
-	proxyUrl, err := url.Parse(pc.Addr)
-	if err != nil {
-		slog.Error("Failed to parse proxy http client", ":", pc.Addr, "err:", err)
-		return nil, err
-	}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyURL(proxyUrl),
-		MaxIdleConns:          1,
-		MaxConnsPerHost:       1,
-		IdleConnTimeout:       25 * time.Second,
-		ExpectContinueTimeout: 2 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		TLSHandshakeTimeout:   4 * time.Second,
-		DisableKeepAlives:     true,
-		DialContext: (&net.Dialer{
-			Timeout:   15 * time.Second,
-			KeepAlive: 25 * time.Second,
-		}).DialContext,
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   40 * time.Second,
-	}
-
-	return client, nil
 }
 
 func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
@@ -166,28 +138,12 @@ func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url strin
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Connection", "close")
-	// req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	// req.Header.Set("Cache-Control", "no-cache")
-	// req.Header.Set("Pragma", "no-cache")
-	// req.Header.Set("Upgrade-Insecure-Requests", "1")
-	// req.Header.Set("Sec-Fetch-Dest", "document")
-	// req.Header.Set("Sec-Fetch-Mode", "navigate")
-	// req.Header.Set("Sec-Fetch-Site", "none")
-	// req.Header.Set("Sec-Fetch-User", "?1")
 
 	return req, nil
 }
-
-// var testUrls = []string{
-// 	"https://mangapark.io/docs",
-// 	"https://mangapark.io/signin",
-// 	"https://mangapark.io/mirrors",
-// 	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
-// }
 
 //	var testUrls = []string{
 //		// "http://neverssl.com",
@@ -195,21 +151,28 @@ func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url strin
 //		"https://ifconfig.me",
 //		"https://icanhazip.com",
 //	}
+//
+//	var testUrls = []string{
+//		"https://mangadex.org/about",
+//		"https://mangadex.org/contact",
+//		"https://mangadex.org/announcements",
+//	}
 var testUrls = []string{
-	"https://mangadex.org/about",
-	"https://mangadex.org/contact",
-	"https://mangadex.org/announcements",
+	"https://mangapark.io/docs",
+	"https://mangapark.io/signin",
+	"https://mangapark.io/mirrors",
+	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
 }
 
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
-	// randIndex := rand.Intn(len(testUrls))
-	// testURL := testUrls[randIndex]
+	randIndex := rand.Intn(len(testUrls))
+	testURL := testUrls[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
 
-	req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://cmdxd98sb0x3yprd.mangadex.network", nil)
-	// req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
+	// req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://mangadex.org/ping", nil)
+	req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
@@ -269,22 +232,22 @@ func GetTxtProxy() ([]string, error) {
 		{"https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt", TypeHTTP},
 		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/http.txt", TypeHTTP},
-		// {"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		// {"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
-		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
-		// {"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
-		// {"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
-		// {"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
-		// {"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
-		// {"https://api.openproxylist.xyz/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", TypeSOCKS5},
+		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		{"https://api.proxyscrape.com/v2/?request=getproxies", TypeSOCKS5},
+		{"https://www.proxy-list.download/api/v1/get?type=socks5", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/yemixzy/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/gfpcom/free-proxy-list/main/list/socks5.txt", TypeSOCKS5},
+		{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt", TypeSOCKS5},
+		{"https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/socks5/global/socks5_checked.txt", TypeSOCKS5},
+		{"https://api.openproxylist.xyz/socks5.txt", TypeSOCKS5},
 	}
 
 	client := &http.Client{

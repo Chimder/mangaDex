@@ -56,3 +56,10 @@ type AllPopularMangaResp struct {
 	Offset int `json:"offset"`
 	Total  int `json:"total"`
 }
+
+type ImgInfoToChan struct {
+	Url         string `json:"url"`
+	Idx         int    `json:"idx"`
+	MangaId     string `json:"manga_id"`
+	ChapterName string `json:"chapter_name"`
+}
