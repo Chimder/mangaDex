@@ -110,8 +110,7 @@ func (q *mangaRepository) InsertManga(ctx context.Context, arg MangaDB) (string,
 
 func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error) {
 	query := `SELECT * FROM img_task`
-	var imgs []ImgInfoToChan
-	rows, err := r.db.Query(ctx, query, imgs)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("err fetch img_task  %w", err)
 	}
@@ -140,9 +139,7 @@ func (r *mangaRepository) CreateImgTask(ctx context.Context, img ImgInfoToChan) 
 func (r *mangaRepository) DeleteImgTaskByURL(ctx context.Context, url string) (bool, error) {
 	query := `DELETE FROM img_task WHERE url = $1`
 
-	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
-		"url": url,
-	})
+	res, err := r.db.Exec(ctx, query, url)
 	if err != nil {
 		return false, err
 	}

@@ -33,7 +33,6 @@ type TaskManager struct {
 	maxWorkers   int
 	currentPage  int
 	ctx          context.Context
-	imgChanTask  chan ImgInfoToChan
 	cancel       context.CancelFunc
 	bucket       *minio.Client
 }
@@ -43,7 +42,6 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 	return &TaskManager{
 		proxyManager: proxyMng,
 		bucket:       bucket,
-		imgChanTask:  make(chan ImgInfoToChan, 100),
 		mangaRepo:    NewMangaRepository(db),
 		maxWorkers:   32,
 		currentPage:  1,
@@ -52,91 +50,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 	}
 }
 
-func (tm *TaskManager) ProcessImg() {
-	// go tm.processImgsToFile()
-	slog.Debug("Start IMG Process")
-
-	items, err := tm.mangaRepo.GetImgTasks(tm.ctx)
-	if err != nil {
-		slog.Error("get all img_task", "err", err)
-		return
-	}
-
-	var wg sync.WaitGroup
-
-	sem := make(chan struct{}, 100)
-	wg.Add(len(items))
-
-	for i, img := range items {
-		go func(i int, img ImgInfoToChan) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-			sem <- struct{}{}
-			var (
-				imgBytes    []byte
-				ext         string
-				contentType string
-				errImg      error
-			)
-			delay := time.Second
-
-			for range 10 {
-				time.Sleep(delay)
-
-				reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
-				defer cancel()
-
-				imgClient := tm.proxyManager.GetAvailableProxyClient(tm.ctx)
-				if imgClient == nil {
-					delay *= 2
-					continue
-				}
-
-				req, err := http.NewRequestWithContext(reqCtx, "GET", img.Url, nil)
-				if err != nil {
-					slog.Error("img request", "err", err)
-					imgClient.MarkAsBad(tm.proxyManager)
-					delay *= 2
-					continue
-				}
-
-				resp, err := imgClient.Client.Do(req)
-				if err != nil {
-					imgClient.MarkAsBad(tm.proxyManager)
-					if resp != nil && resp.Body != nil {
-						resp.Body.Close()
-					}
-					delay *= 2
-					continue
-				}
-
-				imgBytes, ext, contentType, errImg = query.FilterImg(resp, img.Url)
-				if errImg != nil || len(imgBytes) <= 0 {
-					slog.Error("img filter", "err", errImg, "", ext, "", contentType)
-					imgClient.MarkAsBad(tm.proxyManager)
-					delay *= 2
-					continue
-				}
-				imgClient.MarkAsNotBusy()
-				break
-			}
-			if errImg != nil || len(imgBytes) <= 0 {
-				slog.Error("img filter", "err", errImg)
-				return
-			}
-			err := tm.uploadToS3WithRetry(imgBytes, img.MangaId, img.ChapterName, img.Idx, ext, contentType)
-			if err != nil {
-				slog.Error("retry uploadToS3", "err:", err)
-				return
-			}
-		}(i, img)
-	}
-	wg.Wait()
-}
-
-func (tm *TaskManager) ProcessPages() {
+func (tm *TaskManager) StartPageParseWorker() {
 	slog.Info("Starting task manager")
 	sem := make(chan struct{}, 5)
 
@@ -160,6 +74,9 @@ func (tm *TaskManager) ProcessPages() {
 			client.MarkAsNotBusy()
 
 			if len(mangaLists) == 0 {
+				if tm.currentPage > 50 {
+					continue
+				}
 				slog.Info("No manga found - stopping", "page", tm.currentPage)
 				tm.cancel()
 				return
@@ -279,35 +196,92 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 	for i, url := range chapterInfo.Images {
 		go func(url string, idx int) {
+
 			defer imgWG.Done()
-			tm.getImage(url, idx, mangaId, chapterInfo.Name)
+			created, errDB := tm.mangaRepo.CreateImgTask(tm.ctx, ImgInfoToChan{
+				Url: url, Idx: idx, MangaId: mangaId, ChapterName: chapterInfo.Name,
+			})
+			if !created {
+				slog.Error("Failed img to DB", "err", errDB)
+				return
+			}
+
 		}(url, i)
 	}
 
 	imgWG.Wait()
 }
 
-func (tm *TaskManager) getImage(url string, idx int, mangaId, chapterName string) {
+func (tm *TaskManager) StartImgWorkerLoop() {
+	slog.Info("StartImgWorkerLoop: started")
+
+	interval := 15 * time.Second
+
+	for {
+		select {
+		case <-tm.ctx.Done():
+			slog.Info("ImgWorker ctx cancelled")
+			return
+		default:
+		}
+
+		items, err := tm.mangaRepo.GetImgTasks(tm.ctx)
+		if err != nil {
+			slog.Error("GetImgTasks failed", "err", err)
+			time.Sleep(interval)
+			continue
+		}
+
+		if len(items) == 0 {
+			time.Sleep(interval)
+			continue
+		}
+
+		slog.Debug("Start IMG Process", "tasks", len(items))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 100)
+
+		wg.Add(len(items))
+		for i, img := range items {
+			go func(i int, img ImgInfoToChan) {
+				defer func() {
+					<-sem
+					wg.Done()
+				}()
+				sem <- struct{}{}
+				tm.handleImageRetry(img)
+			}(i, img)
+		}
+		wg.Wait()
+	}
+}
+
+func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 	var (
 		imgBytes    []byte
 		ext         string
 		contentType string
 		errImg      error
 	)
+	delay := time.Second
 
-	for range 2 {
+	for range 10 {
+		time.Sleep(delay)
+
 		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
 		defer cancel()
 
 		imgClient := tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if imgClient == nil {
+			delay *= 2
 			continue
 		}
 
-		req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(reqCtx, "GET", img.Url, nil)
 		if err != nil {
 			slog.Error("img request", "err", err)
 			imgClient.MarkAsBad(tm.proxyManager)
+			delay *= 2
 			continue
 		}
 
@@ -317,50 +291,37 @@ func (tm *TaskManager) getImage(url string, idx int, mangaId, chapterName string
 			if resp != nil && resp.Body != nil {
 				resp.Body.Close()
 			}
+			delay *= 2
 			continue
 		}
 
-		imgBytes, ext, contentType, errImg = query.FilterImg(resp, url)
+		imgBytes, ext, contentType, errImg = query.FilterImg(resp, img.Url)
 		if errImg != nil || len(imgBytes) <= 0 {
-			slog.Error("img filter", "err", errImg)
+			slog.Error("img filter", "err", errImg, "", ext, "", contentType)
 			imgClient.MarkAsBad(tm.proxyManager)
+			delay *= 2
 			continue
 		}
-
 		imgClient.MarkAsNotBusy()
 		break
 	}
 	if errImg != nil || len(imgBytes) <= 0 {
-		tm.imgChanTask <- ImgInfoToChan{url, idx, mangaId, chapterName}
-		slog.Error("img download max retry", "err", errImg)
+		slog.Error("img all tries spent", "err", errImg)
+		return
+	}
+	del, errDel := tm.mangaRepo.DeleteImgTaskByURL(tm.ctx, img.Url)
+	if !del {
+		slog.Error("err delete img DB", "err:", errDel)
 		return
 	}
 
-	err := tm.uploadToS3WithRetry(imgBytes, mangaId, chapterName, idx, ext, contentType)
+	err := tm.uploadImgToS3(imgBytes, img.MangaId, img.ChapterName, img.Idx, ext, contentType)
 	if err != nil {
-		slog.Error("upload failed", "url", url, "err", err)
+		slog.Error("retry uploadToS3", "err:", err)
+		return
 	}
 }
-
-func (tm *TaskManager) ProcessImgsToFile() error {
-	slog.Debug("Start IMG To File")
-	for {
-		select {
-		case <-tm.ctx.Done():
-			return fmt.Errorf("ctx done list img")
-		case img := <-tm.imgChanTask:
-			slog.Info("T", ":", img)
-
-			created, err := tm.mangaRepo.CreateImgTask(tm.ctx, img)
-			if !created {
-				slog.Error("Failed to write to file", "err", err)
-				continue
-			}
-		}
-	}
-}
-
-func (tm *TaskManager) uploadToS3WithRetry(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
+func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
 	bucketName := "mangapark"
 	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx+1, ext)
 	s3Retry := 4

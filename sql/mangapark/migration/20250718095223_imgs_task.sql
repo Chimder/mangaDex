@@ -6,10 +6,10 @@ CREATE TABLE img_task (
     idx int NOT NULL,
     manga_id varchar(255) NOT NULL,
     chapter_name varchar(255) NOT NULL
-)
+);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-
+DROP TABLE IF EXISTS img_task;
 -- +goose StatementEnd

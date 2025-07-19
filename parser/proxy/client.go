@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
@@ -45,7 +44,7 @@ func (pc *ProxyClient) MarkAsNotBusy() {
 		return
 	}
 
-	slog.Debug("MarkNotBusy", ":", pc.Addr)
+	// slog.Debug("MarkNotBusy", ":", pc.Addr)
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	pc.Busy = false
@@ -120,7 +119,7 @@ func CreateProxyClient(addr string) *ProxyClient {
 	transport.TLSHandshakeTimeout = 20 * time.Second
 	transport.ExpectContinueTimeout = 3 * time.Second
 	transport.ResponseHeaderTimeout = 60 * time.Second
-	transport.DisableKeepAlives = true
+	transport.DisableKeepAlives = false
 	transport.DisableCompression = false
 
 	return &ProxyClient{
@@ -168,7 +167,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	randIndex := rand.Intn(len(testUrls))
 	testURL := testUrls[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
 	// req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://mangadex.org/ping", nil)

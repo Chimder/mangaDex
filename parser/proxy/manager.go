@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -39,7 +40,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 80)
+	workerPool := make(chan struct{}, 250)
 
 	for {
 		select {
@@ -146,5 +147,6 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
 		client.Status = true
 		pm.ProxyClients[addr] = client
+		slog.Info("Add", "", addr)
 	}
 }

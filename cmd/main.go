@@ -40,11 +40,11 @@ func main() {
 	}
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(600)
+	proxyManager := proxy.NewProxyManager(850)
 	go proxyManager.InitProxyManager(ctx)
 
 	for {
-		if proxyManager.GetProxyCount() >= 45 {
+		if proxyManager.GetProxyCount() >= 50 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",
@@ -54,8 +54,8 @@ func main() {
 	}
 
 	taskMng := mangapark.NewTaskManager(ctx, proxyManager, db, s3bucket)
-	taskMng.ProcessPages()
-	taskMng.ProcessImgsToFile()
+	go taskMng.StartPageParseWorker()
+	taskMng.StartImgWorkerLoop()
 
 	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
 	log.Printf("elapsed %v", time.Since(times))
