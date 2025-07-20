@@ -99,6 +99,8 @@ func (tm *TaskManager) StartPageParseWorker() {
 					if mangaId == "" {
 						tm.handleMangaInfo(m.URL)
 					} else {
+
+						tm.handleChapterUpdateInfo(mangaId, manga.URL)
 						slog.Warn("Skipping existing manga", "title", m.Title)
 					}
 				}(manga)
@@ -154,12 +156,12 @@ func (tm *TaskManager) handleMangaInfo(URL string) {
 		return
 	}
 
-	for _, url := range mangaInfo.Chapters {
+	for _, ch := range mangaInfo.Chapters {
 		chapWg.Add(1)
-		go func(url string) {
+		go func(ch Chapter) {
 			defer chapWg.Done()
-			tm.handleMangaChapter(url, mangaId)
-		}(url)
+			tm.handleMangaChapter(ch.URL, mangaId)
+		}(ch)
 	}
 
 	chapWg.Wait()
@@ -196,17 +198,25 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 	for i, url := range chapterInfo.Images {
 		go func(url string, idx int) {
-
 			defer imgWG.Done()
+
 			created, errDB := tm.mangaRepo.CreateImgTask(tm.ctx, ImgInfoToChan{
 				Url: url, Idx: idx, MangaId: mangaId, ChapterName: chapterInfo.Name,
 			})
 			if !created {
-				slog.Error("Failed img to DB", "err", errDB)
+				slog.Error("Err create img_task to DB", ":", errDB)
 				return
 			}
 
 		}(url, i)
+	}
+
+	created, errDB := tm.mangaRepo.CreateChapter(tm.ctx, CreateChapterArg{
+		manga_id: mangaId, name: chapterInfo.Name, imgs: chapterInfo.Images,
+	})
+	if !created {
+		slog.Error("Failed Create Chapter to DB", "err", errDB)
+		return
 	}
 
 	imgWG.Wait()
@@ -309,15 +319,17 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 		slog.Error("img all tries spent", "err", errImg)
 		return
 	}
-	del, errDel := tm.mangaRepo.DeleteImgTaskByURL(tm.ctx, img.Url)
-	if !del {
-		slog.Error("err delete img DB", "err:", errDel)
-		return
-	}
 
 	err := tm.uploadImgToS3(imgBytes, img.MangaId, img.ChapterName, img.Idx, ext, contentType)
 	if err != nil {
 		slog.Error("retry uploadToS3", "err:", err)
+		return
+
+	}
+
+	del, errDel := tm.mangaRepo.DeleteImgTaskByURL(tm.ctx, img.Url)
+	if !del {
+		slog.Error("err delete img DB", "err:", errDel)
 		return
 	}
 }
@@ -353,34 +365,54 @@ func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName strin
 	return fmt.Errorf("S3 upload failed after %d retries", s3Retry)
 }
 
-// func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
-// 	oldChapters, err := tm.mangaRepo.GetMangaChaptersById(tm.ctx, mangaId)
-// 	if err != nil {
-// 		slog.Error("No manga chapters info", "url", URL)
-// 		return
-// 	}
-// 	if oldChapters.ChaptersAmount <= 150 {
-// 		slog.Warn("chapters max amount", "url", mangaId)
-// 		return
-// 	}
+func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
+	oldChapters, err := tm.mangaRepo.GetChaptersByMangaId(tm.ctx, mangaId)
+	if err != nil {
+		slog.Error("No manga chapters info", "url", URL)
+		return
+	}
 
-// 	client := tm.proxyManager.GetAvailableProxyClient()
-// 	if client == nil {
-// 		slog.Error("No available proxy", "url", URL)
-// 		return
-// 	}
+	var client *proxy.ProxyClient
+	var chapters *MangaInfoParserResp
+	for i := range maxRetries {
+		client = tm.proxyManager.GetAvailableProxyClient(tm.ctx)
+		if client == nil {
+			client.MarkAsBad(tm.proxyManager)
+			slog.Error("No available proxy for chap img", "url", URL, "retry", i)
+			continue
+		}
 
-// 	parser := query.NewParserManager(client.Addr)
-// 	newChapters, err := parser.GetMangaChapters(URL)
-// 	if err != nil {
-// 		client.MarkAsBad()
-// 		slog.Error("Err to get manga info", "url", URL, "error", err)
-// 		return
-// 	}
-// 	if len(newChapters) <= oldChapters.ChaptersAmount {
+		parser := NewParserManager(client.Addr)
+		chapters, err = parser.GetMangaInfo(URL)
+		if err != nil {
+			client.MarkAsBad(tm.proxyManager)
+			slog.Error("Err to get chap imgs", "url", URL, "error", err, "retry", i)
+			continue
+		}
 
-// 	}
-// }
+		client.MarkAsNotBusy()
+		break
+	}
+	if chapters == nil {
+		slog.Error("Failed to get chapters after retries", "url", URL)
+		return
+	}
+
+	oldChapMap := make(map[string]struct{})
+	for _, old := range oldChapters {
+		oldChapMap[old.Name] = struct{}{}
+	}
+
+	var newChapters []string
+	for _, ch := range chapters.Chapters {
+		if _, exists := oldChapMap[ch.Name]; !exists {
+			newChapters = append(newChapters, ch.URL)
+		}
+	}
+	slog.Info("", "", newChapters)
+
+	// return newChapters, nil
+}
 
 func (tm *TaskManager) Stop() {
 	tm.cancel()

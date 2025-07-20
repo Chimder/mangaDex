@@ -10,7 +10,11 @@ type MangaInfoParserResp struct {
 	Authors     []string
 	Description string
 	Genres      []string
-	Chapters    []string
+	Chapters    []Chapter
+}
+type Chapter struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 type AllPopularMangaResp struct {

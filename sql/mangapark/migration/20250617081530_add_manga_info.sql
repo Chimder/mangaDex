@@ -24,7 +24,6 @@ CREATE TABLE chapter (
     updated_at timestamp NOT NULL DEFAULT now(),
     manga_id uuid NOT NULL REFERENCES manga (id) ON DELETE CASCADE,
     name varchar(255) UNIQUE NOT NULL,
-    number real NOT NULL DEFAULT 0,
     imgs text []
 );
 

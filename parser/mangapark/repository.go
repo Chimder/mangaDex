@@ -30,9 +30,14 @@ type MangaRepository interface {
 	InsertManga(ctx context.Context, arg MangaDB) (string, error)
 	GetMangaChaptersById(ctx context.Context, id string) (MangaChaptersInfo, error)
 	ExistsMangaByTitle(ctx context.Context, title string) (string, error)
+
+	GetChapters(ctx context.Context) ([]ChapterDB, error)
+	GetChaptersByMangaId(ctx context.Context, id string) ([]ChapterDB, error)
+	CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error)
+
+	GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error)
 	CreateImgTask(ctx context.Context, img ImgInfoToChan) (bool, error)
 	DeleteImgTaskByURL(ctx context.Context, url string) (bool, error)
-	GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error)
 }
 
 type mangaRepository struct {
@@ -108,6 +113,60 @@ func (q *mangaRepository) InsertManga(ctx context.Context, arg MangaDB) (string,
 	return id, err
 }
 
+type ChapterDB struct {
+	Id        uuid.UUID
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	MangaId   string    `json:"manga_id"`
+	Name      string    `json:"name"`
+	Number    int       `json:"number"`
+	Imgs      []string  `json:"img"`
+}
+
+func (r *mangaRepository) GetChapters(ctx context.Context) ([]ChapterDB, error) {
+	query := `SELECT * FROM chapter`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("err fetch all chapter %w", err)
+	}
+
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ChapterDB])
+}
+
+func (r *mangaRepository) GetChaptersByMangaId(ctx context.Context, id string) ([]ChapterDB, error) {
+	query := `SELECT * FROM chapter WHERE id = $1`
+
+	rows, err := r.db.Query(ctx, query, id)
+	if err != nil {
+		return nil, fmt.Errorf("err fetch all chapter %w", err)
+	}
+
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ChapterDB])
+}
+
+type CreateChapterArg struct {
+	manga_id string
+	name     string
+	number   int
+	imgs     []string
+}
+
+func (r *mangaRepository) CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error) {
+	query := `INSERT INTO chapter (manga_id, name, number, imgs)
+	          VALUES (@manga_id, @name, @number, @imgs)`
+
+	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
+		"manga_id": ch.manga_id,
+		"name":     ch.name,
+		"number":   ch.number,
+		"imgs":     ch.imgs,
+	})
+	if err != nil {
+		return false, fmt.Errorf("err create chapter: %w", err)
+	}
+
+	return res.RowsAffected() > 0, nil
+}
 func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error) {
 	query := `SELECT * FROM img_task`
 	rows, err := r.db.Query(ctx, query)
