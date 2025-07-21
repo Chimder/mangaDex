@@ -52,7 +52,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 
 func (tm *TaskManager) StartPageParseWorker() {
 	slog.Info("Starting task manager")
-	sem := make(chan struct{}, 5)
+	sem := make(chan struct{}, 10)
 
 	for {
 		select {
@@ -85,7 +85,7 @@ func (tm *TaskManager) StartPageParseWorker() {
 			slog.Info("Processing manga list", "count", len(mangaLists), "page", tm.currentPage)
 			var wg sync.WaitGroup
 
-			for _, manga := range mangaLists {
+			for _, m := range mangaLists {
 				sem <- struct{}{}
 				wg.Add(1)
 
@@ -99,11 +99,10 @@ func (tm *TaskManager) StartPageParseWorker() {
 					if mangaId == "" {
 						tm.handleMangaInfo(m.URL)
 					} else {
-
-						tm.handleChapterUpdateInfo(mangaId, manga.URL)
-						slog.Warn("Skipping existing manga", "title", m.Title)
+						slog.Warn("update manga", "title", m.Title)
+						tm.handleChapterUpdateInfo(mangaId, m.URL)
 					}
-				}(manga)
+				}(m)
 			}
 
 			wg.Wait()
@@ -212,7 +211,9 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 	}
 
 	created, errDB := tm.mangaRepo.CreateChapter(tm.ctx, CreateChapterArg{
-		manga_id: mangaId, name: chapterInfo.Name, imgs: chapterInfo.Images,
+		manga_id: mangaId,
+		name:     chapterInfo.Name,
+		imgs:     chapterInfo.Images,
 	})
 	if !created {
 		slog.Error("Failed Create Chapter to DB", "err", errDB)
@@ -333,40 +334,9 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 		return
 	}
 }
-func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
-	bucketName := "mangapark"
-	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx+1, ext)
-	s3Retry := 4
-
-	var errS3 error
-	for i := range s3Retry {
-		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
-
-		_, errS3 = tm.bucket.PutObject(
-			reqCtx,
-			bucketName,
-			objectName,
-			bytes.NewReader(imgBytes),
-			int64(len(imgBytes)),
-			minio.PutObjectOptions{ContentType: contentType},
-		)
-		cancel()
-
-		if errS3 != nil {
-			slog.Error("upload s3", "err", errS3, "try", i+1)
-			time.Sleep(time.Second * time.Duration(i+1))
-			continue
-		}
-
-		slog.Warn("IMG S3 UP", "name", chapterName)
-		return nil
-	}
-
-	return fmt.Errorf("S3 upload failed after %d retries", s3Retry)
-}
 
 func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
-	oldChapters, err := tm.mangaRepo.GetChaptersByMangaId(tm.ctx, mangaId)
+	oldChapters, err := tm.mangaRepo.GetChaptersNamesByMangaId(tm.ctx, mangaId)
 	if err != nil {
 		slog.Error("No manga chapters info", "url", URL)
 		return
@@ -403,17 +373,51 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
 		oldChapMap[old.Name] = struct{}{}
 	}
 
-	var newChapters []string
+	var chapWg sync.WaitGroup
 	for _, ch := range chapters.Chapters {
 		if _, exists := oldChapMap[ch.Name]; !exists {
-			newChapters = append(newChapters, ch.URL)
+			chapWg.Add(1)
+			go func(ch Chapter) {
+				defer chapWg.Done()
+				tm.handleMangaChapter(ch.URL, mangaId)
+			}(ch)
 		}
 	}
-	slog.Info("", "", newChapters)
-
-	// return newChapters, nil
+	chapWg.Wait()
+	slog.Info("update Chapter", "manga", mangaId)
 }
 
+func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
+	bucketName := "mangapark"
+	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx+1, ext)
+	s3Retry := 4
+
+	var errS3 error
+	for i := range s3Retry {
+		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
+
+		_, errS3 = tm.bucket.PutObject(
+			reqCtx,
+			bucketName,
+			objectName,
+			bytes.NewReader(imgBytes),
+			int64(len(imgBytes)),
+			minio.PutObjectOptions{ContentType: contentType},
+		)
+		cancel()
+
+		if errS3 != nil {
+			slog.Error("upload s3", "err", errS3, "try", i+1)
+			time.Sleep(time.Second * time.Duration(i+1))
+			continue
+		}
+
+		slog.Warn("IMG S3 UP", "name", chapterName)
+		return nil
+	}
+
+	return fmt.Errorf("S3 upload failed after %d retries", s3Retry)
+}
 func (tm *TaskManager) Stop() {
 	tm.cancel()
 	time.Sleep(500 * time.Millisecond)

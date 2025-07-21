@@ -40,7 +40,7 @@ func main() {
 	}
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(850)
+	proxyManager := proxy.NewProxyManager(700)
 	go proxyManager.InitProxyManager(ctx)
 
 	for {

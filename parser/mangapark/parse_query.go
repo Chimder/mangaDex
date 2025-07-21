@@ -109,7 +109,7 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
 	defer cancelAlloc()
 
-	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 2*time.Minute)
+	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 3*time.Minute)
 	defer cancelCtxTime()
 
 	ctx, cancel := chromedp.NewContext(ctxWithTimeout)
@@ -120,43 +120,96 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
-		chromedp.Sleep(8*time.Second),
+		chromedp.Sleep(1*time.Second),
 
 		chromedp.Evaluate(`(async () => {
 			const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 			const getLoadedCount = () => {
 				const imgs = Array.from(document.querySelectorAll("div[data-name='image-item'] img"));
-				return imgs.filter(img => img.complete && img.currentSrc && img.currentSrc.trim() !== "").length;
+				return imgs.filter(img => img.complete && img.naturalHeight !== 0 && img.currentSrc).length;
 			};
+
+			const getTotalImgElements = () => {
+				return document.querySelectorAll("div[data-name='image-item'] img").length;
+			};
+
+			const scrollToPosition = async (position) => {
+				window.scrollTo(0, position);
+				await sleep(500);
+			};
+
+			const documentHeight = Math.max(
+				document.body.scrollHeight,
+				document.body.offsetHeight,
+				document.documentElement.clientHeight,
+				document.documentElement.scrollHeight,
+				document.documentElement.offsetHeight
+			);
 
 			let prevCount = 0;
 			let stableTries = 0;
-			const maxTries = 25;
+			const maxIterations = 15;
 
-			for (let i = 0; i < maxTries; i++) {
-				window.scrollTo(0, document.body.scrollHeight);
-				await sleep(1000);
+			for (let iteration = 0; iteration < maxIterations; iteration++) {
+				for (let downScroll = 0; downScroll < 3; downScroll++) {
+					const scrollPosition = (documentHeight / 3) * (downScroll + 1);
+					await scrollToPosition(Math.min(scrollPosition, documentHeight));
+					await sleep(400);
+				}
 
-				const curCount = getLoadedCount();
-				if (curCount === prevCount) {
+				await scrollToPosition(documentHeight);
+				await sleep(700);
+				await scrollToPosition(documentHeight * 0.5);
+				await sleep(600);
+
+				if (iteration % 3 === 0) {
+					await scrollToPosition(0);
+					await sleep(500);
+					await scrollToPosition(documentHeight * 0.3);
+					await sleep(500);
+				}
+
+				await scrollToPosition(documentHeight);
+				await sleep(800);
+
+				const currentCount = getLoadedCount();
+				const totalElements = getTotalImgElements();
+
+				if (currentCount === prevCount) {
 					stableTries++;
-					if (stableTries >= 3) break;
+					if (stableTries >= 2) break;
 				} else {
 					stableTries = 0;
-					prevCount = curCount;
+					prevCount = currentCount;
 				}
+
+				if (currentCount >= totalElements && totalElements > 0) break;
+				await sleep(700);
+			}
+
+			const steps = 8;
+			for (let step = 0; step <= steps; step++) {
+				const position = (documentHeight / steps) * step;
+				window.scrollTo(0, position);
+				await sleep(700);
 			}
 		})()`, nil),
 
 		chromedp.Evaluate(`(() => {
-			const seen = new Set();
-			return Array.from(document.querySelectorAll("div[data-name='image-item'] img"))
-				.map(img => img.currentSrc)
-				.filter(src => {
-					if (!src || !src.trim() || seen.has(src)) return false;
-					seen.add(src);
-					return true;
-				});
+			const imageElements = Array.from(document.querySelectorAll("div[data-name='image-item'] img"));
+			const uniqueUrls = new Set();
+			const orderedImages = [];
+
+			for (const img of imageElements) {
+				const src = img.currentSrc;
+				if (src && src.trim() && !uniqueUrls.has(src)) {
+					uniqueUrls.add(src);
+					orderedImages.push(src);
+				}
+			}
+
+			return orderedImages;
 		})()`, &chapter.Images),
 
 		chromedp.Text(`.comic-detail h6 .opacity-80`, &chapter.Name, chromedp.ByQuery),
@@ -168,60 +221,81 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	}
 
 	if len(chapter.Images) == 0 {
-		return ChapterInfo{}, fmt.Errorf("no valid images found after scroll")
+		return ChapterInfo{}, fmt.Errorf("no valid images found after enhanced scrolling")
 	}
 
 	return chapter, nil
-
 }
 
+// func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
+// 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
+// 	defer cancelAlloc()
 
-func (pm *ParserManager) GetMangaChapters(url string) ([]string, error) {
-	slog.Debug("StartParseMangaChapters", "url", url)
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
-	defer cancelAlloc()
+// 	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 2*time.Minute)
+// 	defer cancelCtxTime()
 
-	ctx, cancel := context.WithTimeout(allocCtx, 3*time.Minute)
-	defer cancel()
+// 	ctx, cancel := chromedp.NewContext(ctxWithTimeout)
+// 	defer cancel()
 
-	chromeCtx, cancelChrome := chromedp.NewContext(ctx)
-	defer cancelChrome()
+// 	var chapter ChapterInfo
 
-	MaxChapters := 15
+// 	err := chromedp.Run(ctx,
+// 		chromedp.Navigate(url),
+// 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
+// 		chromedp.Sleep(8*time.Second),
 
-	var Chapters []string
-	err := chromedp.Run(chromeCtx,
-		chromedp.Navigate(url),
-		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
-		chromedp.Sleep(3*time.Second),
-		chromedp.WaitVisible(`div[data-name="chapter-list"], b.text-xl.font-variant-small-caps`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-    (() => {
-        const chapterList = document.querySelector('div[data-name="chapter-list"]');
-        if (!chapterList) return [];
-        const links = chapterList.querySelectorAll('a.link-hover.link-primary');
-        return Array.from(links)
-            .map(a => {
-                const href = a.getAttribute('href');
-                if (href && href.startsWith('/title/')) {
-                    return window.location.origin + href;
-                }
-                return null;
-            }).filter(Boolean);})()
-`, &Chapters),
-	)
+// 		chromedp.Evaluate(`(async () => {
+// 			const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// 			const getLoadedCount = () => {
+// 				const imgs = Array.from(document.querySelectorAll("div[data-name='image-item'] img"));
+// 				return imgs.filter(img => img.complete && img.currentSrc && img.currentSrc.trim() !== "").length;
+// 			};
 
-	if err != nil {
-		return nil, err
-	}
-	if len(Chapters) == 0 {
-		return nil, fmt.Errorf("chapters not found")
-	}
-	if len(Chapters) > MaxChapters {
-		Chapters = Chapters[0:MaxChapters]
-	}
-	return Chapters, nil
-}
+// 			let prevCount = 0;
+// 			let stableTries = 0;
+// 			const maxTries = 25;
+
+// 			for (let i = 0; i < maxTries; i++) {
+// 				window.scrollTo(0, document.body.scrollHeight);
+// 				await sleep(1000);
+
+// 				const curCount = getLoadedCount();
+// 				if (curCount === prevCount) {
+// 					stableTries++;
+// 					if (stableTries >= 3) break;
+// 				} else {
+// 					stableTries = 0;
+// 					prevCount = curCount;
+// 				}
+// 			}
+// 		})()`, nil),
+
+// 		chromedp.Evaluate(`(() => {
+// 			const seen = new Set();
+// 			return Array.from(document.querySelectorAll("div[data-name='image-item'] img"))
+// 				.map(img => img.currentSrc)
+// 				.filter(src => {
+// 					if (!src || !src.trim() || seen.has(src)) return false;
+// 					seen.add(src);
+// 					return true;
+// 				});
+// 		})()`, &chapter.Images),
+
+// 		chromedp.Text(`.comic-detail h6 .opacity-80`, &chapter.Name, chromedp.ByQuery),
+// 	)
+
+// 	if err != nil {
+// 		log.Printf("Error parsing chapter page: %v", err)
+// 		return ChapterInfo{}, err
+// 	}
+
+// 	if len(chapter.Images) == 0 {
+// 		return ChapterInfo{}, fmt.Errorf("no valid images found after scroll")
+// 	}
+
+// 	return chapter, nil
+
+// }
 
 func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
@@ -295,17 +369,22 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 		//chapter list
 		chromedp.Evaluate(`
     (() => {
-        const chapterList = document.querySelector('div[data-name="chapter-list"]');
-        if (!chapterList) return [];
-        const links = chapterList.querySelectorAll('a.link-hover.link-primary');
-        return Array.from(links)
-            .map(a => {
-                const href = a.getAttribute('href');
-                if (href && href.startsWith('/title/')) {
-                    return window.location.origin + href;
-                }
-                return null;
-            }).filter(Boolean);})()
+    const chapterList = document.querySelector('div[data-name="chapter-list"]');
+    if (!chapterList) return [];
+    const links = chapterList.querySelectorAll('a.link-hover.link-primary');
+    return Array.from(links)
+        .map(a => {
+            const href = a.getAttribute('href');
+            const name = a.textContent.trim();
+            if (href && href.startsWith('/title/')) {
+                return {
+                    name: name,
+                    url: window.location.origin + href
+                };
+            }
+            return null;
+        }).filter(Boolean);
+})()
 `, &mangaInfo.Chapters),
 	)
 

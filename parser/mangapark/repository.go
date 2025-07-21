@@ -32,7 +32,7 @@ type MangaRepository interface {
 	ExistsMangaByTitle(ctx context.Context, title string) (string, error)
 
 	GetChapters(ctx context.Context) ([]ChapterDB, error)
-	GetChaptersByMangaId(ctx context.Context, id string) ([]ChapterDB, error)
+	GetChaptersNamesByMangaId(ctx context.Context, id string) ([]ChapterNamesDB, error)
 	CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error)
 
 	GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error)
@@ -133,32 +133,34 @@ func (r *mangaRepository) GetChapters(ctx context.Context) ([]ChapterDB, error) 
 	return pgx.CollectRows(rows, pgx.RowToStructByName[ChapterDB])
 }
 
-func (r *mangaRepository) GetChaptersByMangaId(ctx context.Context, id string) ([]ChapterDB, error) {
-	query := `SELECT * FROM chapter WHERE id = $1`
+type ChapterNamesDB struct {
+	Name string `json:"name"`
+}
+
+func (r *mangaRepository) GetChaptersNamesByMangaId(ctx context.Context, id string) ([]ChapterNamesDB, error) {
+	query := `SELECT name FROM chapter WHERE manga_id = $1`
 
 	rows, err := r.db.Query(ctx, query, id)
 	if err != nil {
 		return nil, fmt.Errorf("err fetch all chapter %w", err)
 	}
 
-	return pgx.CollectRows(rows, pgx.RowToStructByName[ChapterDB])
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ChapterNamesDB])
 }
 
 type CreateChapterArg struct {
 	manga_id string
 	name     string
-	number   int
 	imgs     []string
 }
 
 func (r *mangaRepository) CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error) {
-	query := `INSERT INTO chapter (manga_id, name, number, imgs)
-	          VALUES (@manga_id, @name, @number, @imgs)`
+	query := `INSERT INTO chapter (manga_id, name, imgs)
+	          VALUES (@manga_id, @name, @imgs)`
 
 	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
 		"manga_id": ch.manga_id,
 		"name":     ch.name,
-		"number":   ch.number,
 		"imgs":     ch.imgs,
 	})
 	if err != nil {

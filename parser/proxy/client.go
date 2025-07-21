@@ -87,8 +87,8 @@ func CreateProxyClient(addr string) *ProxyClient {
 	switch proxyType {
 	case TypeSOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
-			Timeout:   100 * time.Second,
-			KeepAlive: 0,
+			Timeout:   150 * time.Second,
+			// KeepAlive: 0,
 		})
 		if err != nil {
 			return nil
@@ -113,18 +113,18 @@ func CreateProxyClient(addr string) *ProxyClient {
 		return nil
 	}
 
-	transport.MaxIdleConns = 10
-	transport.MaxIdleConnsPerHost = 5
-	transport.IdleConnTimeout = 45 * time.Second
-	transport.TLSHandshakeTimeout = 20 * time.Second
-	transport.ExpectContinueTimeout = 3 * time.Second
-	transport.ResponseHeaderTimeout = 60 * time.Second
+	transport.MaxIdleConns = 6
+	transport.MaxIdleConnsPerHost = 3
+	transport.IdleConnTimeout = 50 * time.Second
+	transport.TLSHandshakeTimeout = 25 * time.Second
+	transport.ExpectContinueTimeout = 5 * time.Second
+	transport.ResponseHeaderTimeout = 70 * time.Second
 	transport.DisableKeepAlives = false
 	transport.DisableCompression = false
 
 	return &ProxyClient{
 		Addr:   originalAddr,
-		Client: &http.Client{Transport: transport, Timeout: 100 * time.Second},
+		Client: &http.Client{Transport: transport, Timeout: 150 * time.Second},
 		Type:   proxyType,
 		Busy:   false,
 		Status: false,
@@ -144,18 +144,6 @@ func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url strin
 	return req, nil
 }
 
-//	var testUrls = []string{
-//		// "http://neverssl.com",
-//		"https://postman-echo.com/get",
-//		"https://ifconfig.me",
-//		"https://icanhazip.com",
-//	}
-//
-//	var testUrls = []string{
-//		"https://mangadex.org/about",
-//		"https://mangadex.org/contact",
-//		"https://mangadex.org/announcements",
-//	}
 var testUrls = []string{
 	"https://mangapark.io/docs",
 	"https://mangapark.io/signin",

@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"log/slog"
 	"sync"
 	"time"
 )
@@ -147,6 +146,6 @@ func (pm *ProxyManager) testAndAddProxy(ctx context.Context, pool chan struct{})
 	if _, exists := pm.ProxyClients[addr]; !exists && len(pm.ProxyClients) < pm.MaxConn {
 		client.Status = true
 		pm.ProxyClients[addr] = client
-		slog.Info("Add", "", addr)
+		// slog.Info("Add", "", addr)
 	}
 }
