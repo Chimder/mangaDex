@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ type MangaRepository interface {
 	GetChapters(ctx context.Context) ([]ChapterDB, error)
 	GetChaptersNamesByMangaId(ctx context.Context, id string) ([]ChapterNamesDB, error)
 	CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error)
+	UpdateChapterImgByIndex(ctx context.Context, mangaID, chapterName string, idx int, imgUrl string) error
 
 	GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error)
 	CreateImgTask(ctx context.Context, img ImgInfoToChan) (bool, error)
@@ -149,26 +151,47 @@ func (r *mangaRepository) GetChaptersNamesByMangaId(ctx context.Context, id stri
 }
 
 type CreateChapterArg struct {
-	manga_id string
-	name     string
-	imgs     []string
+	MangaID string
+	Name    string
+	Imgs    []byte
 }
 
 func (r *mangaRepository) CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error) {
-	query := `INSERT INTO chapter (manga_id, name, imgs)
-	          VALUES (@manga_id, @name, @imgs)`
-
-	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
-		"manga_id": ch.manga_id,
-		"name":     ch.name,
-		"imgs":     ch.imgs,
-	})
+	created, err := r.db.Exec(ctx, `
+	INSERT INTO chapter (manga_id, name, imgs)
+	VALUES ($1, $2, $3::jsonb)
+`, ch.MangaID, ch.Name, ch.Imgs)
 	if err != nil {
 		return false, fmt.Errorf("err create chapter: %w", err)
 	}
 
-	return res.RowsAffected() > 0, nil
+	return created.RowsAffected() > 0, nil
 }
+
+func (r *mangaRepository) UpdateChapterImgByIndex(ctx context.Context, mangaID, chapterName string, idx int, imgUrl string) error {
+	newImgEntry := fmt.Sprintf(`{"o": %d, "u": "%s"}`, idx, imgUrl)
+
+	query := `
+		UPDATE chapter
+		SET imgs = (
+			SELECT jsonb_agg(CASE
+				WHEN elem->>'o' = $3::text
+				THEN $4::jsonb
+				ELSE elem
+			END)
+			FROM jsonb_array_elements(imgs) AS elem
+		)
+		WHERE manga_id = $1 AND name = $2
+	`
+
+	_, err := r.db.Exec(ctx, query, mangaID, chapterName, strconv.Itoa(idx), newImgEntry)
+	if err != nil {
+		return fmt.Errorf("failed to update img in chapter: %w", err)
+	}
+	return nil
+}
+
+// ///////////////
 func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error) {
 	query := `SELECT * FROM img_task`
 	rows, err := r.db.Query(ctx, query)

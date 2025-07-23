@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -53,7 +51,6 @@ type MangaList struct {
 }
 
 func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
-	// slog.Info("StartFetchMangaList", "page", page)
 	url := fmt.Sprintf("https://mangapark.io/search?sortby=field_follow&page=%s", page)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
@@ -85,15 +82,12 @@ func (pm *ParserManager) GetMangaList(page string) ([]MangaList, error) {
 			);
 		})()`, &jsonData),
 	)
-
 	if err != nil {
-		slog.Error("Load manga list", "Err:", err)
 		return nil, err
 	}
 
 	var mangaList []MangaList
 	if err := json.Unmarshal([]byte(jsonData), &mangaList); err != nil {
-		log.Printf("Unmarshal manga list error: %v", err)
 		return nil, err
 	}
 
@@ -120,8 +114,6 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
-		chromedp.Sleep(1*time.Second),
-
 		chromedp.Evaluate(`(async () => {
 			const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -136,7 +128,7 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 
 			const scrollToPosition = async (position) => {
 				window.scrollTo(0, position);
-				await sleep(500);
+				await sleep(1000);
 			};
 
 			const documentHeight = Math.max(
@@ -155,23 +147,17 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 				for (let downScroll = 0; downScroll < 3; downScroll++) {
 					const scrollPosition = (documentHeight / 3) * (downScroll + 1);
 					await scrollToPosition(Math.min(scrollPosition, documentHeight));
-					await sleep(400);
 				}
 
 				await scrollToPosition(documentHeight);
-				await sleep(700);
 				await scrollToPosition(documentHeight * 0.5);
-				await sleep(600);
 
 				if (iteration % 3 === 0) {
 					await scrollToPosition(0);
-					await sleep(500);
 					await scrollToPosition(documentHeight * 0.3);
-					await sleep(500);
 				}
 
 				await scrollToPosition(documentHeight);
-				await sleep(800);
 
 				const currentCount = getLoadedCount();
 				const totalElements = getTotalImgElements();
@@ -216,7 +202,6 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 	)
 
 	if err != nil {
-		log.Printf("Error parsing chapter page: %v", err)
 		return ChapterInfo{}, err
 	}
 
@@ -226,76 +211,6 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 
 	return chapter, nil
 }
-
-// func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
-// 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
-// 	defer cancelAlloc()
-
-// 	ctxWithTimeout, cancelCtxTime := context.WithTimeout(allocCtx, 2*time.Minute)
-// 	defer cancelCtxTime()
-
-// 	ctx, cancel := chromedp.NewContext(ctxWithTimeout)
-// 	defer cancel()
-
-// 	var chapter ChapterInfo
-
-// 	err := chromedp.Run(ctx,
-// 		chromedp.Navigate(url),
-// 		chromedp.WaitVisible(`div[data-name="image-item"] img`, chromedp.ByQuery),
-// 		chromedp.Sleep(8*time.Second),
-
-// 		chromedp.Evaluate(`(async () => {
-// 			const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-// 			const getLoadedCount = () => {
-// 				const imgs = Array.from(document.querySelectorAll("div[data-name='image-item'] img"));
-// 				return imgs.filter(img => img.complete && img.currentSrc && img.currentSrc.trim() !== "").length;
-// 			};
-
-// 			let prevCount = 0;
-// 			let stableTries = 0;
-// 			const maxTries = 25;
-
-// 			for (let i = 0; i < maxTries; i++) {
-// 				window.scrollTo(0, document.body.scrollHeight);
-// 				await sleep(1000);
-
-// 				const curCount = getLoadedCount();
-// 				if (curCount === prevCount) {
-// 					stableTries++;
-// 					if (stableTries >= 3) break;
-// 				} else {
-// 					stableTries = 0;
-// 					prevCount = curCount;
-// 				}
-// 			}
-// 		})()`, nil),
-
-// 		chromedp.Evaluate(`(() => {
-// 			const seen = new Set();
-// 			return Array.from(document.querySelectorAll("div[data-name='image-item'] img"))
-// 				.map(img => img.currentSrc)
-// 				.filter(src => {
-// 					if (!src || !src.trim() || seen.has(src)) return false;
-// 					seen.add(src);
-// 					return true;
-// 				});
-// 		})()`, &chapter.Images),
-
-// 		chromedp.Text(`.comic-detail h6 .opacity-80`, &chapter.Name, chromedp.ByQuery),
-// 	)
-
-// 	if err != nil {
-// 		log.Printf("Error parsing chapter page: %v", err)
-// 		return ChapterInfo{}, err
-// 	}
-
-// 	if len(chapter.Images) == 0 {
-// 		return ChapterInfo{}, fmt.Errorf("no valid images found after scroll")
-// 	}
-
-// 	return chapter, nil
-
-// }
 
 func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) {
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), pm.allocOpts...)
@@ -308,7 +223,7 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 	defer cancelChrome()
 
 	var mangaInfo MangaInfoParserResp
-	MaxChapters := 2
+	MaxChapters := 1
 
 	err := chromedp.Run(chromeCtx,
 		chromedp.Navigate(url),
@@ -400,9 +315,9 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 	if len(mangaInfo.Chapters) > MaxChapters {
 		mangaInfo.Chapters = mangaInfo.Chapters[0:MaxChapters]
 	}
-	if len(mangaInfo.AltTitles) == 0 {
-		return nil, fmt.Errorf("altTitles not found")
-	}
+	// if len(mangaInfo.AltTitles) == 0 {
+	// 	return nil, fmt.Errorf("altTitles not found")
+	// }
 	if len(mangaInfo.Authors) == 0 {
 		return nil, fmt.Errorf("authors not found")
 	}

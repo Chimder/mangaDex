@@ -3,12 +3,14 @@ package mangapark
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"mangadex/parser/proxy"
 	"mangadex/parser/query"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,7 +54,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 
 func (tm *TaskManager) StartPageParseWorker() {
 	slog.Info("Starting task manager")
-	sem := make(chan struct{}, 10)
+	sem := make(chan struct{}, 2)
 
 	for {
 		select {
@@ -182,45 +184,54 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 		parser := NewParserManager(client.Addr)
 		chapterInfo, err = parser.GetImgFromChapter(URL)
-		if err != nil {
+		if err == nil && (len(chapterInfo.Images) == 0 || strings.TrimSpace(chapterInfo.Name) == "") {
+			err = fmt.Errorf("parsed chapter has empty name or no images")
 			client.MarkAsBad(tm.proxyManager)
-			slog.Error("Err to get chap imgs", "url", URL, "error", err, "retry", i)
+			slog.Error("Invalid parsed chapter data", "url", URL, "retry", i)
 			continue
 		}
 
 		client.MarkAsNotBusy()
 		break
 	}
+	if err == nil && (len(chapterInfo.Images) == 0 || strings.TrimSpace(chapterInfo.Name) == "") {
+		err = fmt.Errorf("parsed chapter has empty name or no images")
+		client.MarkAsBad(tm.proxyManager)
+		return
+	}
 
 	var imgWG sync.WaitGroup
 	imgWG.Add(len(chapterInfo.Images))
 
+	imgs := make([]map[string]any, len(chapterInfo.Images))
 	for i, url := range chapterInfo.Images {
+		imgs = append(imgs, map[string]any{"o": i, "u": nil})
+
 		go func(url string, idx int) {
 			defer imgWG.Done()
 
 			created, errDB := tm.mangaRepo.CreateImgTask(tm.ctx, ImgInfoToChan{
-				Url: url, Idx: idx, MangaId: mangaId, ChapterName: chapterInfo.Name,
+				Url: url, Idx: idx + 1, MangaId: mangaId, ChapterName: chapterInfo.Name,
 			})
 			if !created {
 				slog.Error("Err create img_task to DB", ":", errDB)
 				return
 			}
-
 		}(url, i)
 	}
 
+	imgWG.Wait()
+
+	imgsJson, _ := json.Marshal(imgs)
 	created, errDB := tm.mangaRepo.CreateChapter(tm.ctx, CreateChapterArg{
-		manga_id: mangaId,
-		name:     chapterInfo.Name,
-		imgs:     chapterInfo.Images,
+		MangaID: mangaId,
+		Name:    chapterInfo.Name,
+		Imgs:    imgsJson,
 	})
 	if !created {
 		slog.Error("Failed Create Chapter to DB", "err", errDB)
 		return
 	}
-
-	imgWG.Wait()
 }
 
 func (tm *TaskManager) StartImgWorkerLoop() {
@@ -279,12 +290,12 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 	for range 10 {
 		time.Sleep(delay)
 
-		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
+		reqCtx, cancel := context.WithTimeout(tm.ctx, 50*time.Second)
 		defer cancel()
 
 		imgClient := tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if imgClient == nil {
-			delay *= 2
+			delay++
 			continue
 		}
 
@@ -292,7 +303,7 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 		if err != nil {
 			slog.Error("img request", "err", err)
 			imgClient.MarkAsBad(tm.proxyManager)
-			delay *= 2
+			delay++
 			continue
 		}
 
@@ -302,7 +313,7 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 			if resp != nil && resp.Body != nil {
 				resp.Body.Close()
 			}
-			delay *= 2
+			delay++
 			continue
 		}
 
@@ -310,7 +321,7 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 		if errImg != nil || len(imgBytes) <= 0 {
 			slog.Error("img filter", "err", errImg, "", ext, "", contentType)
 			imgClient.MarkAsBad(tm.proxyManager)
-			delay *= 2
+			delay++
 			continue
 		}
 		imgClient.MarkAsNotBusy()
@@ -321,11 +332,17 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 		return
 	}
 
-	err := tm.uploadImgToS3(imgBytes, img.MangaId, img.ChapterName, img.Idx, ext, contentType)
+	safeName := query.SafeChapterNameToS3(img.ChapterName)
+	err := tm.uploadImgToS3(imgBytes, img.MangaId, safeName, img.Idx, ext, contentType)
 	if err != nil {
 		slog.Error("retry uploadToS3", "err:", err)
 		return
+	}
 
+	imgUrl := fmt.Sprintf("%s/%s/%s/%02d%s", "localhost:9000/mangapark", img.MangaId, safeName, img.Idx, ext)
+	err = tm.mangaRepo.UpdateChapterImgByIndex(tm.ctx, img.MangaId, img.ChapterName, img.Idx, imgUrl)
+	if err != nil {
+		slog.Error("failed to update chapter img", "err", err)
 	}
 
 	del, errDel := tm.mangaRepo.DeleteImgTaskByURL(tm.ctx, img.Url)
@@ -363,8 +380,9 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
 		client.MarkAsNotBusy()
 		break
 	}
-	if chapters == nil {
+	if err != nil || len(chapters.Chapters) <= 0 {
 		slog.Error("Failed to get chapters after retries", "url", URL)
+		client.MarkAsBad(tm.proxyManager)
 		return
 	}
 
@@ -412,7 +430,6 @@ func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName strin
 			continue
 		}
 
-		slog.Warn("IMG S3 UP", "name", chapterName)
 		return nil
 	}
 

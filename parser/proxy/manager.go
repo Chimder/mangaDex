@@ -39,7 +39,7 @@ func (pm *ProxyManager) InitProxyManager(ctx context.Context) error {
 }
 
 func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
-	workerPool := make(chan struct{}, 250)
+	workerPool := make(chan struct{}, 100)
 
 	for {
 		select {
@@ -51,7 +51,7 @@ func (pm *ProxyManager) mainProxyPool(ctx context.Context) {
 			pm.mu.RUnlock()
 
 			if needed <= 0 {
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(1 * time.Second)
 				continue
 			}
 

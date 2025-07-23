@@ -44,7 +44,7 @@ func main() {
 	go proxyManager.InitProxyManager(ctx)
 
 	for {
-		if proxyManager.GetProxyCount() >= 50 {
+		if proxyManager.GetProxyCount() >= 25 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",

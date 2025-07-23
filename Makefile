@@ -13,6 +13,7 @@ status:
 
 reset:
 	goose -dir $(MGDIR) postgres ${DB_URL} reset
+	goose -dir $(MGDIR) postgres ${DB_URL} up
 
 down:
 	goose -dir $(MGDIR) postgres ${DB_URL} down

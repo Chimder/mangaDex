@@ -9,9 +9,22 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/chai2010/webp"
 )
+
+func SafeChapterNameToS3(name string) string {
+	name = strings.TrimSpace(name)
+
+	reg := regexp.MustCompile(`[^\w\s.-]`)
+	name = reg.ReplaceAllString(name, "_")
+
+	name = strings.ReplaceAll(name, " ", "_")
+
+	return url.PathEscape(name)
+}
 
 func ConvertToWebp(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
