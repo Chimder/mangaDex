@@ -3,7 +3,6 @@ package mangapark
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"mangadex/parser/proxy"
@@ -59,6 +58,7 @@ func (tm *TaskManager) StartPageParseWorker() {
 	for {
 		select {
 		case <-tm.ctx.Done():
+			close(sem)
 			slog.Info("Stopping processing")
 			return
 		default:
@@ -81,6 +81,7 @@ func (tm *TaskManager) StartPageParseWorker() {
 				}
 				slog.Info("No manga found - stopping", "page", tm.currentPage)
 				tm.cancel()
+				close(sem)
 				return
 			}
 
@@ -110,6 +111,7 @@ func (tm *TaskManager) StartPageParseWorker() {
 			wg.Wait()
 			tm.currentPage++
 		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -203,10 +205,7 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 	var imgWG sync.WaitGroup
 	imgWG.Add(len(chapterInfo.Images))
 
-	imgs := make([]map[string]any, len(chapterInfo.Images))
 	for i, url := range chapterInfo.Images {
-		imgs = append(imgs, map[string]any{"o": i, "u": nil})
-
 		go func(url string, idx int) {
 			defer imgWG.Done()
 
@@ -222,11 +221,9 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 	imgWG.Wait()
 
-	imgsJson, _ := json.Marshal(imgs)
 	created, errDB := tm.mangaRepo.CreateChapter(tm.ctx, CreateChapterArg{
 		MangaID: mangaId,
 		Name:    chapterInfo.Name,
-		Imgs:    imgsJson,
 	})
 	if !created {
 		slog.Error("Failed Create Chapter to DB", "err", errDB)
@@ -407,7 +404,7 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
 
 func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
 	bucketName := "mangapark"
-	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx+1, ext)
+	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaId, chapterName, idx, ext)
 	s3Retry := 4
 
 	var errS3 error
@@ -425,8 +422,8 @@ func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName strin
 		cancel()
 
 		if errS3 != nil {
-			slog.Error("upload s3", "err", errS3, "try", i+1)
-			time.Sleep(time.Second * time.Duration(i+1))
+			slog.Error("upload s3", "err", errS3, "try", i)
+			time.Sleep(time.Second * time.Duration(i))
 			continue
 		}
 

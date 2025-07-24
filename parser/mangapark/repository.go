@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -153,14 +152,14 @@ func (r *mangaRepository) GetChaptersNamesByMangaId(ctx context.Context, id stri
 type CreateChapterArg struct {
 	MangaID string
 	Name    string
-	Imgs    []byte
+	// Imgs    []byte
 }
 
 func (r *mangaRepository) CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error) {
 	created, err := r.db.Exec(ctx, `
-	INSERT INTO chapter (manga_id, name, imgs)
-	VALUES ($1, $2, $3::jsonb)
-`, ch.MangaID, ch.Name, ch.Imgs)
+	INSERT INTO chapter (manga_id, name)
+	VALUES ($1, $2)
+`, ch.MangaID, ch.Name)
 	if err != nil {
 		return false, fmt.Errorf("err create chapter: %w", err)
 	}
@@ -173,20 +172,13 @@ func (r *mangaRepository) UpdateChapterImgByIndex(ctx context.Context, mangaID, 
 
 	query := `
 		UPDATE chapter
-		SET imgs = (
-			SELECT jsonb_agg(CASE
-				WHEN elem->>'o' = $3::text
-				THEN $4::jsonb
-				ELSE elem
-			END)
-			FROM jsonb_array_elements(imgs) AS elem
-		)
+		SET imgs = imgs || $3::jsonb
 		WHERE manga_id = $1 AND name = $2
 	`
 
-	_, err := r.db.Exec(ctx, query, mangaID, chapterName, strconv.Itoa(idx), newImgEntry)
+	_, err := r.db.Exec(ctx, query, mangaID, chapterName, "["+newImgEntry+"]")
 	if err != nil {
-		return fmt.Errorf("failed to update img in chapter: %w", err)
+		return fmt.Errorf("failed to append img in chapter: %w", err)
 	}
 	return nil
 }

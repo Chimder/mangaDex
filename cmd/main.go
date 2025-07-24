@@ -40,11 +40,11 @@ func main() {
 	}
 	times := time.Now()
 
-	proxyManager := proxy.NewProxyManager(700)
+	proxyManager := proxy.NewProxyManager(800)
 	go proxyManager.InitProxyManager(ctx)
 
 	for {
-		if proxyManager.GetProxyCount() >= 25 {
+		if proxyManager.GetProxyCount() >= 35 {
 			break
 		}
 		slog.Info("Waiting for proxies to be ready...",
