@@ -205,12 +205,14 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 	var imgWG sync.WaitGroup
 	imgWG.Add(len(chapterInfo.Images))
 
+	safeName := query.SafeChapterNameToS3(chapterInfo.Name)
+
 	for i, url := range chapterInfo.Images {
 		go func(url string, idx int) {
 			defer imgWG.Done()
 
 			created, errDB := tm.mangaRepo.CreateImgTask(tm.ctx, ImgInfoToChan{
-				Url: url, Idx: idx + 1, MangaId: mangaId, ChapterName: chapterInfo.Name,
+				Url: url, Idx: idx + 1, MangaId: mangaId, ChapterName: safeName,
 			})
 			if !created {
 				slog.Error("Err create img_task to DB", ":", errDB)
@@ -218,15 +220,14 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 			}
 		}(url, i)
 	}
-
 	imgWG.Wait()
 
 	created, errDB := tm.mangaRepo.CreateChapter(tm.ctx, CreateChapterArg{
 		MangaID: mangaId,
-		Name:    chapterInfo.Name,
+		Name:    safeName,
 	})
 	if !created {
-		slog.Error("Failed Create Chapter to DB", "err", errDB)
+		slog.Error("Failed Create Chapter to DB", "err", errDB, "manga", mangaId, "n:", safeName)
 		return
 	}
 }
@@ -329,14 +330,13 @@ func (tm *TaskManager) handleImageRetry(img ImgInfoToChan) {
 		return
 	}
 
-	safeName := query.SafeChapterNameToS3(img.ChapterName)
-	err := tm.uploadImgToS3(imgBytes, img.MangaId, safeName, img.Idx, ext, contentType)
+	err := tm.uploadImgToS3(imgBytes, img.MangaId, img.ChapterName, img.Idx, ext, contentType)
 	if err != nil {
 		slog.Error("retry uploadToS3", "err:", err)
 		return
 	}
 
-	imgUrl := fmt.Sprintf("%s/%s/%s/%02d%s", "localhost:9000/mangapark", img.MangaId, safeName, img.Idx, ext)
+	imgUrl := fmt.Sprintf("%s/%s/%s/%02d%s", "localhost:9000/mangapark", img.MangaId, img.ChapterName, img.Idx, ext)
 	err = tm.mangaRepo.UpdateChapterImgByIndex(tm.ctx, img.MangaId, img.ChapterName, img.Idx, imgUrl)
 	if err != nil {
 		slog.Error("failed to update chapter img", "err", err)
@@ -390,16 +390,17 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
 
 	var chapWg sync.WaitGroup
 	for _, ch := range chapters.Chapters {
-		if _, exists := oldChapMap[ch.Name]; !exists {
+		safeName := query.SafeChapterNameToS3(ch.Name)
+		if _, exists := oldChapMap[safeName]; !exists {
 			chapWg.Add(1)
 			go func(ch Chapter) {
 				defer chapWg.Done()
+				slog.Warn("UP ADD", "n:", ch.Name, "U:", ch.URL, "id:", mangaId)
 				tm.handleMangaChapter(ch.URL, mangaId)
 			}(ch)
 		}
 	}
 	chapWg.Wait()
-	slog.Info("update Chapter", "manga", mangaId)
 }
 
 func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaId, chapterName string, idx int, ext, contentType string) error {
