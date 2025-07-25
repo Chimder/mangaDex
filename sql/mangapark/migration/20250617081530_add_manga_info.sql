@@ -24,8 +24,8 @@ CREATE TABLE chapter (
     updated_at timestamp NOT NULL DEFAULT now(),
     manga_id uuid NOT NULL REFERENCES manga (id) ON DELETE CASCADE,
     name varchar(255) NOT NULL,
-    imgs jsonb NOT NULL DEFAULT '[]'::jsonb,
-    UNIQUE (manga_id, name)
+    imgs jsonb NOT NULL DEFAULT '[]'::jsonb
+    -- UNIQUE (manga_id, name)
 );
 
 CREATE INDEX idx_chapter_manga_id ON chapter (manga_id);

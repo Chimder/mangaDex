@@ -9,7 +9,6 @@ import (
 	"mangadex/parser/query"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +52,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 
 func (tm *TaskManager) StartPageParseWorker() {
 	slog.Info("Starting task manager")
-	sem := make(chan struct{}, 2)
+	sem := make(chan struct{}, 17)
 
 	for {
 		select {
@@ -186,17 +185,16 @@ func (tm *TaskManager) handleMangaChapter(URL string, mangaId string) {
 
 		parser := NewParserManager(client.Addr)
 		chapterInfo, err = parser.GetImgFromChapter(URL)
-		if err == nil && (len(chapterInfo.Images) == 0 || strings.TrimSpace(chapterInfo.Name) == "") {
-			err = fmt.Errorf("parsed chapter has empty name or no images")
-			client.MarkAsBad(tm.proxyManager)
+		if err != nil {
 			slog.Error("Invalid parsed chapter data", "url", URL, "retry", i)
+			client.MarkAsBad(tm.proxyManager)
 			continue
 		}
 
 		client.MarkAsNotBusy()
 		break
 	}
-	if err == nil && (len(chapterInfo.Images) == 0 || strings.TrimSpace(chapterInfo.Name) == "") {
+	if err != nil || chapterInfo.Name == "" {
 		err = fmt.Errorf("parsed chapter has empty name or no images")
 		client.MarkAsBad(tm.proxyManager)
 		return
@@ -390,12 +388,12 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaId string, URL string) {
 
 	var chapWg sync.WaitGroup
 	for _, ch := range chapters.Chapters {
+
 		safeName := query.SafeChapterNameToS3(ch.Name)
 		if _, exists := oldChapMap[safeName]; !exists {
 			chapWg.Add(1)
 			go func(ch Chapter) {
 				defer chapWg.Done()
-				slog.Warn("UP ADD", "n:", ch.Name, "U:", ch.URL, "id:", mangaId)
 				tm.handleMangaChapter(ch.URL, mangaId)
 			}(ch)
 		}

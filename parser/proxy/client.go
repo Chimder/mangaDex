@@ -87,7 +87,7 @@ func CreateProxyClient(addr string) *ProxyClient {
 	switch proxyType {
 	case TypeSOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
-			Timeout:   150 * time.Second,
+			Timeout: 150 * time.Second,
 			// KeepAlive: 0,
 		})
 		if err != nil {
@@ -155,7 +155,7 @@ func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	randIndex := rand.Intn(len(testUrls))
 	testURL := testUrls[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://mangadex.org/ping", nil)

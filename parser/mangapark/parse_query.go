@@ -192,17 +192,23 @@ func (pm *ParserManager) GetImgFromChapter(url string) (ChapterInfo, error) {
 				if (src && src.trim() && !uniqueUrls.has(src)) {
 					uniqueUrls.add(src);
 					orderedImages.push(src);
-				}
-			}
+					}
+					}
 
-			return orderedImages;
-		})()`, &chapter.Images),
+					return orderedImages;
+					})()`, &chapter.Images),
 
+		chromedp.WaitVisible(`.comic-detail h6 .opacity-80`, chromedp.ByQuery),
 		chromedp.Text(`.comic-detail h6 .opacity-80`, &chapter.Name, chromedp.ByQuery),
 	)
 
 	if err != nil {
 		return ChapterInfo{}, err
+	}
+
+	chapter.Name = strings.TrimSpace(chapter.Name)
+	if chapter.Name == "" {
+		return ChapterInfo{}, fmt.Errorf("no valid chapter name")
 	}
 
 	if len(chapter.Images) == 0 {
@@ -223,7 +229,7 @@ func (pm *ParserManager) GetMangaInfo(url string) (*MangaInfoParserResp, error) 
 	defer cancelChrome()
 
 	var mangaInfo MangaInfoParserResp
-	MaxChapters := 1
+	MaxChapters := 3
 
 	err := chromedp.Run(chromeCtx,
 		chromedp.Navigate(url),
