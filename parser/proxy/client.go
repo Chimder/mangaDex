@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,8 +34,8 @@ type ProxyClient struct {
 
 func (pc *ProxyClient) MarkAsBusy() {
 	pc.mu.Lock()
-	defer pc.mu.Unlock()
 	pc.Busy = true
+	pc.mu.Unlock()
 }
 
 func (pc *ProxyClient) MarkAsNotBusy() {
@@ -44,10 +43,9 @@ func (pc *ProxyClient) MarkAsNotBusy() {
 		return
 	}
 
-	// slog.Debug("MarkNotBusy", ":", pc.Addr)
 	pc.mu.Lock()
-	defer pc.mu.Unlock()
 	pc.Busy = false
+	pc.mu.Unlock()
 }
 
 func (pc *ProxyClient) MarkAsBad(pm *ProxyManager) {
@@ -144,22 +142,22 @@ func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url strin
 	return req, nil
 }
 
-var testUrls = []string{
-	"https://mangapark.io/docs",
-	"https://mangapark.io/signin",
-	"https://mangapark.io/mirrors",
-	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
-}
+// var testUrls = []string{
+// 	"https://mangapark.io/docs",
+// 	"https://mangapark.io/signin",
+// 	"https://mangapark.io/mirrors",
+// 	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
+// }
 
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
-	randIndex := rand.Intn(len(testUrls))
-	testURL := testUrls[randIndex]
+	// randIndex := rand.Intn(len(testUrls))
+	// testURL := testUrls[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	reqCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
-	// req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://mangadex.org/ping", nil)
-	req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
+	req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://mangadex.org/ping", nil)
+	// req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}

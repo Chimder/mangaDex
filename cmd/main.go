@@ -43,14 +43,27 @@ func main() {
 	proxyManager := proxy.NewProxyManager(800)
 	go proxyManager.InitProxyManager(ctx)
 
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				slog.Info("Proxy testing status",
+					"active", proxyManager.GetProxyCount(),
+					"testing", proxyManager.GetCurrentlyTesting(),
+					"next idx", proxyManager.NextIndexAddres,
+					"total", len(proxyManager.AllAddresses),
+				)
+				time.Sleep(30 * time.Second)
+			}
+		}
+	}()
 	for {
-		if proxyManager.GetProxyCount() >= 50 {
+		if proxyManager.GetProxyCount() >= 40 {
 			break
 		}
-		slog.Info("Waiting for proxies to be ready...",
-			"current", proxyManager.GetProxyCount(),
-			"required", proxyManager.MaxConn)
-		time.Sleep(30 * time.Second)
+		time.Sleep(40 * time.Second)
 	}
 
 	taskMng := mangapark.NewTaskManager(ctx, proxyManager, db, s3bucket)

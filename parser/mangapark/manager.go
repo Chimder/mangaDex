@@ -52,7 +52,7 @@ func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpo
 
 func (tm *TaskManager) StartPageParseWorker() {
 	slog.Info("Starting task manager")
-	sem := make(chan struct{}, 17)
+	sem := make(chan struct{}, 36)
 
 	for {
 		select {
@@ -257,7 +257,7 @@ func (tm *TaskManager) StartImgWorkerLoop() {
 
 		slog.Debug("Start IMG Process", "tasks", len(items))
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, 100)
+		sem := make(chan struct{}, 200)
 
 		wg.Add(len(items))
 		for i, img := range items {
