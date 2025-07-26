@@ -2,13 +2,12 @@ package db
 
 import (
 	"context"
-	"log"
-	"log/slog"
 	"mangadex/config"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/rs/zerolog/log"
 )
 
 func StorageBucket() *minio.Client {
@@ -25,7 +24,7 @@ func StorageBucket() *minio.Client {
 		Secure: secure,
 	})
 	if err != nil {
-		log.Panicf("MinIO connect error: %v", err)
+		log.Fatal().Err(err).Msg("MinIO connection failed")
 	}
 
 	ctx := context.Background()
@@ -33,11 +32,11 @@ func StorageBucket() *minio.Client {
 
 	exists, err := minioClient.BucketExists(ctx, bucketName)
 	if err != nil {
-		log.Printf("Error checking bucket: %v", err)
+		log.Error().Err(err).Msg("Failed to check bucket")
 	} else {
-		log.Printf("Bucket exists: %v", exists)
+		log.Debug().Bool("exists", exists).Str("bucket", bucketName).Msg("Bucket status checked")
 	}
 
-	slog.Info("MinIO connection OK")
+	log.Info().Msg("MinIO connection OK")
 	return minioClient
 }

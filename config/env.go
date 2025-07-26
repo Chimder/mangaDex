@@ -14,6 +14,8 @@ type EnvVars struct {
 	Debug           bool   `env:"DEBUG"`
 	Endpoint        string `env:"S3_ENDPOINT"`
 	AccessKeyid     string `env:"S3_ACCESS_KEY_ID"`
+	ENV             string `env:"ENV"`
+	LOG_LEVEL       string `env:"LOG_LEVEL"`
 	SecretAccessKey string `env:"S3_SECRET_ACCESS_KEY"`
 }
 

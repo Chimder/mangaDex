@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"golang.org/x/net/proxy"
 )
 
@@ -34,18 +34,17 @@ type ProxyClient struct {
 
 func (pc *ProxyClient) MarkAsBusy() {
 	pc.mu.Lock()
+	defer pc.mu.Unlock()
 	pc.Busy = true
-	pc.mu.Unlock()
 }
 
 func (pc *ProxyClient) MarkAsNotBusy() {
 	if pc == nil {
 		return
 	}
-
 	pc.mu.Lock()
+	defer pc.mu.Unlock()
 	pc.Busy = false
-	pc.mu.Unlock()
 }
 
 func (pc *ProxyClient) MarkAsBad(pm *ProxyManager) {
@@ -86,7 +85,6 @@ func CreateProxyClient(addr string) *ProxyClient {
 	case TypeSOCKS5:
 		dialer, err := proxy.SOCKS5("tcp", cleanAddr, nil, &net.Dialer{
 			Timeout: 150 * time.Second,
-			// KeepAlive: 0,
 		})
 		if err != nil {
 			return nil
@@ -142,29 +140,17 @@ func (pc *ProxyClient) CreateMangaRequest(ctx context.Context, method, url strin
 	return req, nil
 }
 
-// var testUrls = []string{
-// 	"https://mangapark.io/docs",
-// 	"https://mangapark.io/signin",
-// 	"https://mangapark.io/mirrors",
-// 	"https://mangapark.io/reports?where=all&status=unread_and_unsolved",
-// }
-
 func (pc *ProxyClient) TestWithRotation(ctx context.Context) error {
 	// randIndex := rand.Intn(len(testUrls))
 	// testURL := testUrls[randIndex]
 
-	reqCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
 	req, err := pc.CreateMangaRequest(reqCtx, "GET", "https://mangadex.org/ping", nil)
-	// req, err := pc.CreateMangaRequest(reqCtx, "GET", testURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Connection", "close")
-	req.Header.Set("Range", "bytes=0-15")
 
 	resp, err := pc.Client.Do(req)
 	if err != nil {
@@ -255,7 +241,7 @@ func GetTxtProxy() ([]string, error) {
 
 			req, err := http.NewRequestWithContext(ctx, "GET", src.URL, nil)
 			if err != nil {
-				log.Printf("Err to request for %s", src.URL)
+				log.Debug().Str("url", src.URL).Err(err).Msg("Failed to create request")
 				return
 			}
 
@@ -263,13 +249,13 @@ func GetTxtProxy() ([]string, error) {
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Printf("Err to fetch %s", src.URL)
+				log.Debug().Str("url", src.URL).Err(err).Msg("Failed to fetch proxies")
 				return
 			}
 			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				log.Printf("HTTP error: %s", src.URL)
+				log.Debug().Str("url", src.URL).Int("status", resp.StatusCode).Msg("Non-200 status code")
 				return
 			}
 
@@ -312,7 +298,6 @@ func parseProxiesFromReader(reader io.Reader, pType ProxyType) []string {
 		}
 
 		var part string
-
 		if strings.Contains(line, "://") {
 			u, err := url.Parse(line)
 			if err == nil && u.Host != "" {
@@ -346,7 +331,7 @@ func parseProxiesFromReader(reader io.Reader, pType ProxyType) []string {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("Err scan addr: %v", err)
+		log.Debug().Err(err).Msg("Failed to scan proxy list")
 	}
 	return parsedProxies
 }

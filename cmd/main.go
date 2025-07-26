@@ -5,8 +5,6 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"log"
-	"log/slog"
 	"mangadex/db"
 	"mangadex/parser/mangapark"
 	"mangadex/parser/proxy"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/rs/zerolog/log"
 )
 
 //		@title			Unofficial MangaDex API
@@ -23,22 +22,20 @@ import (
 //		@description This is an unofficial REST API for interacting with MangaDex website functionality.
 //	  @BasePath	/
 func main() {
-	LoggerInit()
-	slog.Info("Start server")
+	SetupLogger()
+
+	log.Info().Msg("Start server")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	s3bucket := db.StorageBucket()
 
-	/////////////////////////////////////////////////////
-	// url := "https://mangapark.io/title/10749-en-one-punch-man/8596918-punch-202"
-	// parser.TestMangaChapterTask(ctx, url, s3bucket)
-	/////////////////////////////////////////////////////
-	db, err := db.DBConn(ctx)
+	dbConn, err := db.DBConn(ctx)
 	if err != nil {
-		log.Fatalf("DB conn %v", err)
+		log.Fatal().Err(err).Msg("DB connection failed")
 	}
-	times := time.Now()
+
+	// startTime := time.Now()
 
 	proxyManager := proxy.NewProxyManager(800)
 	go proxyManager.InitProxyManager(ctx)
@@ -49,16 +46,17 @@ func main() {
 			case <-ctx.Done():
 				return
 			default:
-				slog.Info("Proxy testing status",
-					"active", proxyManager.GetProxyCount(),
-					"testing", proxyManager.GetCurrentlyTesting(),
-					"next idx", proxyManager.NextIndexAddres,
-					"total", len(proxyManager.AllAddresses),
-				)
+				log.Info().
+					Int("active", proxyManager.GetProxyCount()).
+					Int("testing", int(proxyManager.GetCurrentlyTesting())).
+					Int("next_idx", proxyManager.NextIndexAddres).
+					Int("total", len(proxyManager.AllAddresses)).
+					Msg("Proxy testing status")
 				time.Sleep(30 * time.Second)
 			}
 		}
 	}()
+
 	for {
 		if proxyManager.GetProxyCount() >= 40 {
 			break
@@ -66,46 +64,13 @@ func main() {
 		time.Sleep(40 * time.Second)
 	}
 
-	taskMng := mangapark.NewTaskManager(ctx, proxyManager, db, s3bucket)
+	taskMng := mangapark.NewTaskManager(ctx, proxyManager, dbConn, s3bucket)
 	go taskMng.StartPageParseWorker()
 	taskMng.StartImgWorkerLoop()
 
-	log.Printf("nextIND %v of %v", proxyManager.NextIndexAddres, len(proxyManager.AllAddresses))
-	log.Printf("elapsed %v", time.Since(times))
-	//////////////////////////////////////////////////////////////////////////////////////////
-
-	////////////////////
-	//////////////////////
-	//////////////////////
-	////////////////////
-	//////////////////////
-	// r := handler.Init()
-
-	// srv := &http.Server{
-	// 	Addr:         ":8080",
-	// 	Handler:      r,
-	// 	ReadTimeout:  5 * time.Second,
-	// 	WriteTimeout: 10 * time.Second,
-	// 	IdleTimeout:  120 * time.Second,
-	// }
-
-	// go func() {
-	// 	if err := srv.ListenAndServe(); err != nil {
-	// 		log.Fatalf("Server error: %v", err)
-	// 	}
-	// }()
-
-	slog.Info("Server is running...")
+	log.Info().Msg("Server is running...")
 	<-ctx.Done()
-	slog.Info("Shutting down server...")
+	log.Info().Msg("Shutting down server...")
 
-	// defer taskMng.Stop()
-	// shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	// defer cancel()
-
-	// if err := srv.Shutdown(shutdownCtx); err != nil {
-	// 	slog.Error("Server shutdown error", "error", err)
-	// } else {
-	slog.Info("Server stopped gracefully")
-	// }
+	log.Info().Msg("Server stopped gracefully")
 }

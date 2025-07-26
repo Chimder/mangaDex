@@ -2,12 +2,13 @@ package db
 
 import (
 	"context"
-	"log"
+	// "log"
 	"mangadex/config"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
+	"github.com/rs/zerolog"
 )
 
 func DBConn(ctx context.Context) (*pgxpool.Pool, error) {
@@ -15,7 +16,7 @@ func DBConn(ctx context.Context) (*pgxpool.Pool, error) {
 
 	config, err := pgxpool.ParseConfig(url)
 	if err != nil {
-		log.Fatalf("Failed to parse config DBPOOL: %v", err)
+		zerolog.Ctx(ctx).Fatal().Err(err).Msg("Failed to parse database config")
 	}
 
 	config.MaxConns = 5
@@ -27,9 +28,9 @@ func DBConn(ctx context.Context) (*pgxpool.Pool, error) {
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		zerolog.Ctx(ctx).Fatal().Err(err).Msg("Failed to connect to database")
 	}
 
-	log.Println("Database pool created successfully")
+	zerolog.Ctx(ctx).Info().Msg("Database pool created successfully")
 	return pool, nil
 }
