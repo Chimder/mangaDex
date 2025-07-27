@@ -57,16 +57,15 @@ func main() {
 		}
 	}()
 
-	for {
-		if proxyManager.GetProxyCount() >= 40 {
-			break
-		}
-		time.Sleep(40 * time.Second)
-	}
+	// for {
+	// 	if proxyManager.GetProxyCount() >= 40 {
+	// 		break
+	// 	}
+	// 	time.Sleep(40 * time.Second)
+	// }
 
 	taskMng := mangapark.NewTaskManager(ctx, proxyManager, dbConn, s3bucket)
-	go taskMng.StartPageParseWorker()
-	taskMng.StartImgWorkerLoop()
+	taskMng.StartWorkers()
 
 	log.Info().Msg("Server is running...")
 	<-ctx.Done()

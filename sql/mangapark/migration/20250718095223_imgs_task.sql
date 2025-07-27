@@ -7,6 +7,11 @@ CREATE TABLE img_task (
     manga_id varchar(255) NOT NULL,
     chapter_name varchar(255) NOT NULL
 );
+
+CREATE TABLE chapter_task (
+    url varchar(255) NOT NULL UNIQUE,
+    manga_id varchar(255) NOT NULL
+);
 -- +goose StatementEnd
 
 -- +goose Down

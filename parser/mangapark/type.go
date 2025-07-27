@@ -61,9 +61,16 @@ type AllPopularMangaResp struct {
 	Total  int `json:"total"`
 }
 
-type ImgInfoToChan struct {
+type ImgInfoToPool struct {
 	Url         string `json:"url"`
 	Idx         int    `json:"idx"`
-	MangaId     string `json:"manga_id"`
+	MangaID     string `json:"manga_id"`
 	ChapterName string `json:"chapter_name"`
+}
+
+type ChapterInfoToPool struct{
+	Url         string `json:"url"`
+	MangaID     string `json:"manga_id"`
+	// Idx         int    `json:"idx"`
+	// ChapterName string `json:"chapter_name"`
 }

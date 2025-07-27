@@ -27,17 +27,21 @@ type MangaDB struct {
 }
 
 type MangaRepository interface {
-	InsertManga(ctx context.Context, arg MangaDB) (string, error)
-	GetMangaChaptersById(ctx context.Context, id string) (MangaChaptersInfo, error)
+	CreateManga(ctx context.Context, arg MangaDB) (string, error)
+	GetMangaChaptersByID(ctx context.Context, id string) (MangaChaptersInfo, error)
 	ExistsMangaByTitle(ctx context.Context, title string) (string, error)
 
 	GetChapters(ctx context.Context) ([]ChapterDB, error)
-	GetChaptersNamesByMangaId(ctx context.Context, id string) ([]ChapterNamesDB, error)
+	GetChaptersNamesByMangaID(ctx context.Context, id string) ([]ChapterNamesDB, error)
 	CreateChapter(ctx context.Context, ch CreateChapterArg) (bool, error)
 	UpdateChapterImgByIndex(ctx context.Context, mangaID, chapterName string, idx int, imgUrl string) error
 
-	GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error)
-	CreateImgTask(ctx context.Context, img ImgInfoToChan) (bool, error)
+	GetChapterTasks(ctx context.Context) ([]ChapterInfoToPool, error)
+	CreateChapterTask(ctx context.Context, ch ChapterInfoToPool) (bool, error)
+	DeleteChapterTaskByURL(ctx context.Context, url string) (bool, error)
+
+	GetImgTasks(ctx context.Context) ([]ImgInfoToPool, error)
+	CreateImgTask(ctx context.Context, img ImgInfoToPool) (bool, error)
 	DeleteImgTaskByURL(ctx context.Context, url string) (bool, error)
 }
 
@@ -62,18 +66,18 @@ type MangaChaptersInfo struct {
 func (r *mangaRepository) ExistsMangaByTitle(ctx context.Context, title string) (string, error) {
 	query := `SELECT id FROM manga WHERE title = $1 LIMIT 1`
 
-	var mangaId uuid.UUID
-	err := r.db.QueryRow(ctx, query, title).Scan(&mangaId)
+	var mangaID uuid.UUID
+	err := r.db.QueryRow(ctx, query, title).Scan(&mangaID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", err
 		}
 		return "", err
 	}
-	return mangaId.String(), nil
+	return mangaID.String(), nil
 }
 
-func (r *mangaRepository) GetMangaChaptersById(ctx context.Context, id string) (MangaChaptersInfo, error) {
+func (r *mangaRepository) GetMangaChaptersByID(ctx context.Context, id string) (MangaChaptersInfo, error) {
 	query := `SELECT (last_chapter, chapters_amount, manga_id) FROM manga WHERE id = $1`
 	rows, err := r.db.Query(ctx, query, id)
 	if err != nil {
@@ -84,7 +88,7 @@ func (r *mangaRepository) GetMangaChaptersById(ctx context.Context, id string) (
 	return pgx.CollectOneRow(rows, pgx.RowToStructByName[MangaChaptersInfo])
 }
 
-func (q *mangaRepository) InsertManga(ctx context.Context, arg MangaDB) (string, error) {
+func (q *mangaRepository) CreateManga(ctx context.Context, arg MangaDB) (string, error) {
 	query := `
 		INSERT INTO "manga" (
 			title, cover_url, alt_titles, status,
@@ -118,7 +122,7 @@ type ChapterDB struct {
 	Id        uuid.UUID
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	MangaId   string    `json:"manga_id"`
+	MangaID   string    `json:"manga_id"`
 	Name      string    `json:"name"`
 	Number    int       `json:"number"`
 	Imgs      []string  `json:"img"`
@@ -138,7 +142,7 @@ type ChapterNamesDB struct {
 	Name string `json:"name"`
 }
 
-func (r *mangaRepository) GetChaptersNamesByMangaId(ctx context.Context, id string) ([]ChapterNamesDB, error) {
+func (r *mangaRepository) GetChaptersNamesByMangaID(ctx context.Context, id string) ([]ChapterNamesDB, error) {
 	query := `SELECT name FROM chapter WHERE manga_id = $1`
 
 	rows, err := r.db.Query(ctx, query, id)
@@ -183,8 +187,46 @@ func (r *mangaRepository) UpdateChapterImgByIndex(ctx context.Context, mangaID, 
 	return nil
 }
 
+////////////
+
+func (r *mangaRepository) GetChapterTasks(ctx context.Context) ([]ChapterInfoToPool, error) {
+	query := `SELECT * FROM chapter_task`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("err fetch img_task  %w", err)
+	}
+	defer rows.Close()
+
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ChapterInfoToPool])
+}
+
+func (r *mangaRepository) CreateChapterTask(ctx context.Context, ch ChapterInfoToPool) (bool, error) {
+	query := `INSERT INTO chapter_task (url, manga_id) VALUES (@url, @manga_id) ON CONFLICT DO NOTHING`
+
+	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
+		"url":      ch.Url,
+		"manga_id": ch.MangaID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("err create img_task: %w", err)
+	}
+
+	return res.RowsAffected() > 0, nil
+}
+
+func (r *mangaRepository) DeleteChapterTaskByURL(ctx context.Context, url string) (bool, error) {
+	query := `DELETE FROM chapter_task WHERE url = $1`
+
+	res, err := r.db.Exec(ctx, query, url)
+	if err != nil {
+		return false, err
+	}
+
+	return res.RowsAffected() > 0, nil
+}
+
 // ///////////////
-func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToChan, error) {
+func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToPool, error) {
 	query := `SELECT * FROM img_task`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -192,17 +234,17 @@ func (r *mangaRepository) GetImgTasks(ctx context.Context) ([]ImgInfoToChan, err
 	}
 	defer rows.Close()
 
-	return pgx.CollectRows(rows, pgx.RowToStructByName[ImgInfoToChan])
+	return pgx.CollectRows(rows, pgx.RowToStructByName[ImgInfoToPool])
 }
 
-func (r *mangaRepository) CreateImgTask(ctx context.Context, img ImgInfoToChan) (bool, error) {
+func (r *mangaRepository) CreateImgTask(ctx context.Context, img ImgInfoToPool) (bool, error) {
 	query := `INSERT INTO img_task (url, idx, manga_id, chapter_name)
 	          VALUES (@url, @idx, @manga_id, @chapter_name)`
 
 	res, err := r.db.Exec(ctx, query, pgx.NamedArgs{
 		"url":          img.Url,
 		"idx":          img.Idx,
-		"manga_id":     img.MangaId,
+		"manga_id":     img.MangaID,
 		"chapter_name": img.ChapterName,
 	})
 	if err != nil {
