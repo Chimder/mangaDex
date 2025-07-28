@@ -17,4 +17,5 @@ CREATE TABLE chapter_task (
 -- +goose Down
 -- +goose StatementBegin
 DROP TABLE IF EXISTS img_task;
+DROP TABLE IF EXISTS chapter_task;
 -- +goose StatementEnd

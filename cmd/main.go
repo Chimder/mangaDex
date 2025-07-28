@@ -7,14 +7,25 @@ import (
 	_ "image/png"
 	"mangadex/db"
 	"mangadex/parser/mangapark"
+	"mangadex/parser/metrics"
 	"mangadex/parser/proxy"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
+	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
+)
+
+var (
+	counter = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "devbulls_counter",
+		Help: "Counting the total number of requests handled",
+	})
 )
 
 //		@title			Unofficial MangaDex API
@@ -35,37 +46,37 @@ func main() {
 		log.Fatal().Err(err).Msg("DB connection failed")
 	}
 
-	// startTime := time.Now()
-
 	proxyManager := proxy.NewProxyManager(800)
 	go proxyManager.InitProxyManager(ctx)
 
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				log.Info().
-					Int("active", proxyManager.GetProxyCount()).
-					Int("testing", int(proxyManager.GetCurrentlyTesting())).
-					Int("next_idx", proxyManager.NextIndexAddres).
-					Int("total", len(proxyManager.AllAddresses)).
-					Msg("Proxy testing status")
-				time.Sleep(30 * time.Second)
-			}
-		}
-	}()
-
-	// for {
-	// 	if proxyManager.GetProxyCount() >= 40 {
-	// 		break
+	// go func() {
+	// 	for {
+	// 		select {
+	// 		case <-ctx.Done():
+	// 			return
+	// 		default:
+	// 			log.Info().
+	// 				Int("active", proxyManager.GetProxyCount()).
+	// 				Int("testing", int(proxyManager.GetCurrentlyTesting())).
+	// 				Int("next_idx", proxyManager.NextIndexAddres).
+	// 				Int("total", len(proxyManager.AllAddresses)).
+	// 				Msg("Proxy testing status")
+	// 			time.Sleep(30 * time.Second)
+	// 		}
 	// 	}
-	// 	time.Sleep(40 * time.Second)
-	// }
+	// }()
 
-	taskMng := mangapark.NewTaskManager(ctx, proxyManager, dbConn, s3bucket)
+	metric := metrics.NewTracerMetrics()
+
+	taskMng := mangapark.NewTaskManager(ctx, proxyManager, dbConn, s3bucket, metric)
 	taskMng.StartWorkers()
+
+	/////////////////////////////////////////////////////////////////////////////////////////////////
+	router := gin.Default()
+
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	router.Run(":8080")
 
 	log.Info().Msg("Server is running...")
 	<-ctx.Done()

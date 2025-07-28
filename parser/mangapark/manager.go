@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"mangadex/parser/metrics"
 	"mangadex/parser/proxy"
 	"mangadex/parser/query"
 	"net/http"
+
 	"strconv"
 	"sync"
 	"time"
@@ -33,16 +35,18 @@ type TaskManager struct {
 	maxWorkers   int
 	currentPage  int
 	ctx          context.Context
+	metrics      *metrics.TracerMetrics
 	cancel       context.CancelFunc
 	bucket       *minio.Client
 }
 
-func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpool.Pool, bucket *minio.Client) *TaskManager {
+func NewTaskManager(ctx context.Context, proxyMng *proxy.ProxyManager, db *pgxpool.Pool, bucket *minio.Client, metrics *metrics.TracerMetrics) *TaskManager {
 	ctx, cancel := context.WithCancel(ctx)
 	return &TaskManager{
 		proxyManager: proxyMng,
 		bucket:       bucket,
 		mangaRepo:    NewMangaRepository(db),
+		metrics:      metrics,
 		maxWorkers:   36,
 		currentPage:  1,
 		ctx:          ctx,
@@ -180,8 +184,6 @@ func (tm *TaskManager) handleMangaInfo(URL string) {
 func (tm *TaskManager) ChapterWorker() {
 	log.Info().Msg("Start Chapter Worker: started")
 
-	interval := 15 * time.Second
-
 	for {
 		select {
 		case <-tm.ctx.Done():
@@ -193,12 +195,10 @@ func (tm *TaskManager) ChapterWorker() {
 		chapters, err := tm.mangaRepo.GetChapterTasks(tm.ctx)
 		if err != nil {
 			log.Error().Err(err).Msg("GetImgTasks failed")
-			time.Sleep(interval)
 			continue
 		}
 
 		if len(chapters) == 0 {
-			time.Sleep(interval)
 			continue
 		}
 
@@ -235,12 +235,15 @@ func (tm *TaskManager) handleChapter(ch ChapterInfoToPool) {
 		}
 
 		parser := NewParserManager(client.Addr)
+		start := time.Now()
+
 		chapterInfo, err = parser.GetImgFromChapter(ch.Url)
 		if err != nil {
 			client.MarkAsBad(tm.proxyManager)
 			continue
 		}
 
+		tm.metrics.DurationQuery.WithLabelValues("chapter").Observe(time.Since(start).Seconds())
 		client.MarkAsNotBusy()
 		break
 	}
@@ -373,7 +376,7 @@ func (tm *TaskManager) handleImage(img ImgInfoToPool) {
 		break
 	}
 	if errImg != nil || len(imgBytes) <= 0 {
-		log.Error().Err(errImg).Msg("img all tries spent")
+		// log.Error().Err(errImg).Msg("img all tries spent")
 		return
 	}
 

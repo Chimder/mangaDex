@@ -12,7 +12,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - csTrade
+      - parser
 
   pgweb:
     image: sosedoff/pgweb
@@ -25,7 +25,7 @@ services:
     ports:
       - "8081:8081"
     networks:
-      - csTrade
+      - parser
 
   minio:
     image: quay.io/minio/minio:latest
@@ -41,26 +41,40 @@ services:
     volumes:
       - /mnt/x/docker/s3/mangapark:/data
 
-  # elasticsearch:
-  #   image: docker.elastic.co/elasticsearch/elasticsearch:latest
-  #   container_name: elasticsearch
-  #   environment:
-  #     - discovery.type=single-node
-  #     - xpack.security.enabled=false
-  #     - xpack.security.transport.ssl.enabled=false
-  #   ports:
-  #     - "9200:9200"
-  #     - "9300:9300"
-  #   networks:
-  #     - csTrade
-  #   volumes:
-  #     - es_data:/usr/share/elasticsearch/data
-  #   restart: always
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    # environment:
+      # - GF_DATABASE_TYPE=postgres
+      # - GF_DATABASE_HOST=postgres@mangapark:5432
+      # - GF_DATABASE_NAME=postgres
+      # - GF_DATABASE_USER=postgres
+      # - GF_DATABASE_PASSWORD=postgres
+    depends_on:
+      - prometheus
+    networks:
+      - parser
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml
+    ports:
+      - '9090:9090'
+    networks:
+      - parser
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
 
 volumes:
   pgdata:
   es_data:
+  grafana-storage:
 
 networks:
-  csTrade:
+  parser:
     driver: bridge
