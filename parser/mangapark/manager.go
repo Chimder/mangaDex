@@ -139,11 +139,15 @@ func (tm *TaskManager) handleMangaInfo(URL string) {
 			continue
 		}
 		parser := NewParserManager(client.Addr)
+
+		start := time.Now()
 		mangaInfo, errParse = parser.GetMangaInfo(URL)
 		if errParse != nil {
 			client.MarkAsBad(tm.proxyManager)
 			continue
 		}
+		tm.metrics.DurationQuery.WithLabelValues("manga").Observe(time.Since(start).Seconds())
+
 		mangaID, errDb = tm.mangaRepo.CreateManga(tm.ctx, MangaDB{
 			Title:       mangaInfo.Title,
 			CoverUrl:    mangaInfo.CoverURL,
@@ -157,6 +161,7 @@ func (tm *TaskManager) handleMangaInfo(URL string) {
 			client.MarkAsBad(tm.proxyManager)
 			continue
 		}
+		tm.metrics.Success.WithLabelValues("manga").Inc()
 		break
 	}
 	if mangaInfo == nil {
@@ -280,6 +285,7 @@ func (tm *TaskManager) handleChapter(ch ChapterInfoToPool) {
 		log.Error().Err(errDB).Str("manga", ch.MangaID).Str("name", safeName).Msg("Failed Create Chapter to DB")
 		return
 	}
+	tm.metrics.Success.WithLabelValues("chapter").Inc()
 
 	del, errDel := tm.mangaRepo.DeleteChapterTaskByURL(tm.ctx, ch.Url)
 	if !del {
@@ -350,6 +356,7 @@ func (tm *TaskManager) handleImage(img ImgInfoToPool) {
 			continue
 		}
 
+		start := time.Now()
 		req, err := http.NewRequestWithContext(reqCtx, "GET", img.Url, nil)
 		if err != nil {
 			log.Error().Err(err).Msg("img request")
@@ -366,12 +373,12 @@ func (tm *TaskManager) handleImage(img ImgInfoToPool) {
 			continue
 		}
 
-		imgBytes, ext, contentType, errImg = query.FilterImg(resp, img.Url)
+		imgBytes, ext, contentType, errImg = query.FilterImg(resp, img.Url, tm.metrics.DurationQuery, start)
 		if errImg != nil || len(imgBytes) <= 0 {
-			log.Error().Err(errImg).Str("ext", ext).Str("contentType", contentType).Msg("img filter")
 			imgClient.MarkAsBad(tm.proxyManager)
 			continue
 		}
+
 		imgClient.MarkAsNotBusy()
 		break
 	}
@@ -391,6 +398,7 @@ func (tm *TaskManager) handleImage(img ImgInfoToPool) {
 	if errUp != nil {
 		log.Error().Err(errUp).Msg("failed to update chapter img")
 	}
+	tm.metrics.Success.WithLabelValues("img_uploaded").Inc()
 
 	del, errDel := tm.mangaRepo.DeleteImgTaskByURL(tm.ctx, img.Url)
 	if !del {
@@ -408,11 +416,10 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaID string, URL string) {
 
 	var client *proxy.ProxyClient
 	var chapters *MangaInfoParserResp
-	for i := range maxRetries {
+	for range maxRetries {
 		client = tm.proxyManager.GetAvailableProxyClient(tm.ctx)
 		if client == nil {
 			client.MarkAsBad(tm.proxyManager)
-			log.Error().Str("url", URL).Int("retry", i).Msg("No available proxy for chap img")
 			continue
 		}
 
@@ -420,7 +427,6 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaID string, URL string) {
 		chapters, err = parser.GetMangaInfo(URL)
 		if err != nil {
 			client.MarkAsBad(tm.proxyManager)
-			log.Error().Str("url", URL).Err(err).Int("retry", i).Msg("Err to get chap imgs")
 			continue
 		}
 
@@ -460,12 +466,13 @@ func (tm *TaskManager) handleChapterUpdateInfo(mangaID string, URL string) {
 func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaID, chapterName string, idx int, ext, contentType string) error {
 	bucketName := "mangapark"
 	objectName := fmt.Sprintf(`%s/%s/%02d%s`, mangaID, chapterName, idx, ext)
-	s3Retry := 4
+	s3Retry := 5
 
 	var errS3 error
 	for i := range s3Retry {
 		reqCtx, cancel := context.WithTimeout(tm.ctx, 45*time.Second)
 
+		now := time.Now()
 		_, errS3 = tm.bucket.PutObject(
 			reqCtx,
 			bucketName,
@@ -482,6 +489,7 @@ func (tm *TaskManager) uploadImgToS3(imgBytes []byte, mangaID, chapterName strin
 			continue
 		}
 
+		tm.metrics.DurationQuery.WithLabelValues("s3").Observe(time.Since(now).Seconds())
 		return nil
 	}
 

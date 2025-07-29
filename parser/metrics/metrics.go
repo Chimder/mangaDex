@@ -6,10 +6,10 @@ import (
 )
 
 type TracerMetrics struct {
-	ErrCounter    *prometheus.CounterVec
-	ManagerStats  *prometheus.GaugeVec
 	Success       *prometheus.CounterVec
 	DurationQuery *prometheus.HistogramVec
+	// ManagerStats  *prometheus.GaugeVec
+	// ErrCounter    *prometheus.CounterVec
 }
 
 func NewTracerMetrics() *TracerMetrics {
@@ -23,18 +23,11 @@ func NewTracerMetrics() *TracerMetrics {
 			Buckets: prometheus.DefBuckets,
 		}, []string{"type"}),
 
-		ManagerStats: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Name: "MD_Manager_parser_stats",
-			},
-			[]string{"stats"},
-		),
-
-		ErrCounter: prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "MD_Error",
-			},
-			[]string{"err"},
-		),
+		// ManagerStats: prometheus.NewGaugeVec(
+		// 	prometheus.GaugeOpts{
+		// 		Name: "MD_Manager_parser_stats",
+		// 	},
+		// 	[]string{"stats"},
+		// ),
 	}
 }

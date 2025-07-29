@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/chai2010/webp"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func SafeChapterNameToS3(name string) string {
@@ -49,7 +51,7 @@ func extractExtAndMime(urlStr string) (string, string) {
 	return ext, contentType
 }
 
-func FilterImg(resp *http.Response, url string) ([]byte, string, string, error) {
+func FilterImg(resp *http.Response, url string, duration *prometheus.HistogramVec, start time.Time) ([]byte, string, string, error) {
 	defer resp.Body.Close()
 	imgBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -59,6 +61,7 @@ func FilterImg(resp *http.Response, url string) ([]byte, string, string, error) 
 		return nil, "", "", fmt.Errorf("empty image data")
 	}
 
+	duration.WithLabelValues("img").Observe(time.Since(start).Seconds())
 	ext, contentType := extractExtAndMime(url)
 
 	switch contentType {

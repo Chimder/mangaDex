@@ -15,17 +15,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
-)
-
-var (
-	counter = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "devbulls_counter",
-		Help: "Counting the total number of requests handled",
-	})
 )
 
 //		@title			Unofficial MangaDex API
@@ -46,25 +37,9 @@ func main() {
 		log.Fatal().Err(err).Msg("DB connection failed")
 	}
 
+	////////////////////////////////////////////////////////////////////////////////////////////////
 	proxyManager := proxy.NewProxyManager(800)
 	go proxyManager.InitProxyManager(ctx)
-
-	// go func() {
-	// 	for {
-	// 		select {
-	// 		case <-ctx.Done():
-	// 			return
-	// 		default:
-	// 			log.Info().
-	// 				Int("active", proxyManager.GetProxyCount()).
-	// 				Int("testing", int(proxyManager.GetCurrentlyTesting())).
-	// 				Int("next_idx", proxyManager.NextIndexAddres).
-	// 				Int("total", len(proxyManager.AllAddresses)).
-	// 				Msg("Proxy testing status")
-	// 			time.Sleep(30 * time.Second)
-	// 		}
-	// 	}
-	// }()
 
 	metric := metrics.NewTracerMetrics()
 
@@ -72,11 +47,19 @@ func main() {
 	taskMng.StartWorkers()
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+		SkipPaths: []string{"/metrics"},
+	}))
+	router.Use(gin.Recovery())
 
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	router.Run(":8080")
+	go func() {
+		if err := router.Run(":8080"); err != nil {
+			log.Fatal().Err(err).Msg("Failed to start server")
+		}
+	}()
 
 	log.Info().Msg("Server is running...")
 	<-ctx.Done()

@@ -1,9 +1,9 @@
 global:
-  scrape_interval: 10s
+  scrape_interval: 15s
 
 scrape_configs:
   - job_name: "Mangapark"
-    scrape_interval: 10s
+    scrape_interval: 15s
     static_configs:
       - targets:
           - "172.23.111.103:8080"
