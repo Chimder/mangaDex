@@ -1,7 +1,36 @@
+version: '3.8'
 services:
+  # mangapark_parser:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: mangapark_parser
+  #   restart: always
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     minio:
+  #       condition: service_healthy
+  #   environment:
+  #     DB_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+  #     DEBUG: "true"
+  #     ENV: "dev"
+  #     LOG_LEVEL: "debug"
+  #     S3_ENDPOINT: minio:9000
+  #     S3_ACCESS_KEY_ID: minioadmin
+  #     S3_SECRET_ACCESS_KEY: minioadmin
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '4.0'
+  #   networks:
+  #     - parser
+
   postgres:
     image: postgres:latest
-    container_name: mangapark
+    container_name: postgres
     restart: always
     environment:
       POSTGRES_DB: postgres
@@ -11,6 +40,12 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pg_isready -h localhost -U postgres || exit 1"]
+    #   interval: 5s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
     networks:
       - parser
 
@@ -21,7 +56,7 @@ services:
     depends_on:
       - postgres
     environment:
-      PGWEB_DATABASE_URL: "postgres://postgres:postgres@mangapark:5432/postgres?sslmode=disable"
+      PGWEB_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable"
     ports:
       - "8081:8081"
     networks:
@@ -38,6 +73,14 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/minio/health/live || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 20s
+    # networks:
+    #   - parser
     volumes:
       - /mnt/x/docker/s3/mangapark:/data
 
@@ -48,14 +91,6 @@ services:
       - "3000:3000"
     volumes:
       - grafana-storage:/var/lib/grafana
-    # environment:
-      # - GF_DATABASE_TYPE=postgres
-      # - GF_DATABASE_HOST=postgres@mangapark:5432
-      # - GF_DATABASE_NAME=postgres
-      # - GF_DATABASE_USER=postgres
-      # - GF_DATABASE_PASSWORD=postgres
-    depends_on:
-      - prometheus
     networks:
       - parser
 

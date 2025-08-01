@@ -209,7 +209,7 @@ func (tm *TaskManager) ChapterWorker() {
 
 		log.Debug().Int("tasks", len(chapters)).Msg("Chapter Process")
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, 100)
+		sem := make(chan struct{}, 85)
 
 		wg.Add(len(chapters))
 		for i, ch := range chapters {
@@ -253,7 +253,7 @@ func (tm *TaskManager) handleChapter(ch ChapterInfoToPool) {
 		break
 	}
 	if err != nil || chapterInfo.Name == "" {
-		log.Error().Err(err).Msg("Use all retries parsed chapter has empty name or no images")
+		// log.Error().Err(err).Msg("Use all retries parsed chapter has empty name or no images")
 		client.MarkAsBad(tm.proxyManager)
 		return
 	}
@@ -321,7 +321,7 @@ func (tm *TaskManager) ImgWorker() {
 
 		log.Debug().Int("tasks", len(items)).Msg("Start IMG Process")
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, 300)
+		sem := make(chan struct{}, 150)
 
 		wg.Add(len(items))
 		for i, img := range items {

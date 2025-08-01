@@ -23,6 +23,7 @@ func StorageBucket() *minio.Client {
 		Creds:  credentials.NewStaticV4(url.AccessKeyid, url.SecretAccessKey, ""),
 		Secure: secure,
 	})
+
 	if err != nil {
 		log.Fatal().Err(err).Msg("MinIO connection failed")
 	}
